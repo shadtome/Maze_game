@@ -1,0 +1,1 @@
+from Maze_env.env.mazes import maze_env
