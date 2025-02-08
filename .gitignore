@@ -162,3 +162,7 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+#  ############# 
+# data and trained agents
+trained_agents/

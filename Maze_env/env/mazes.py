@@ -19,9 +19,9 @@ import torch
 # 4 move right
 
 class maze_env(gym.Env):
-    metadata = {'render_modes': ['human','rgb_array'],'render_fps':10,
+    metadata = {'render_modes': ['human','rgb_array'],'render_fps':4,
                 'obs_type': ['rgb','spatial','basic']}
-    def __init__(self, maze, num_agents,vision_len = 1, render_mode = None, obs_type=None):
+    def __init__(self, maze, len_game=1000,num_agents=1,vision_len = 1, render_mode = None, obs_type=None):
         super(maze_env, self).__init__()
 
         
@@ -34,6 +34,7 @@ class maze_env(gym.Env):
         self.n_rows = maze.grid_shape[0]
         self.min_size = min(self.n_cols,self.n_rows)
 
+        self.len_game = len_game
         self.vision_len = vision_len
         self.num_agents = num_agents
         self.agent_positions = None
@@ -48,6 +49,8 @@ class maze_env(gym.Env):
         self.action_space = gym.spaces.Discrete(5)
         self.actions = ['STAY','UP','DOWN','LEFT','RIGHT']
 
+        self.agent_target_obs_space = gym.spaces.Discrete(self.n_cols*self.n_rows)
+
         # Observation Space, depending on the obs_type
         self.observation_space = None
         if self.obs_type == 'basic':
@@ -60,63 +63,106 @@ class maze_env(gym.Env):
             self.observation_space = gym.spaces.Dict(obs)
 
         elif self.obs_type == 'rgb':
+            
             self.observation_space = gym.spaces.Box(0,255,shape=(self.window_size,self.window_size,3))
+            
+        
         elif self.obs_type == 'spatial':
-            None
-
+            obs = dict()
+            for a in range(self.num_agents):
+                
+                obs[f'local_{a}'] = gym.spaces.Box(0,255,shape = (2*self.vision_len + 1,2*self.vision_len+1,3),dtype=int)
+                
+            self.observation_space = gym.spaces.Dict(obs)
         
 
 
         assert render_mode is None or render_mode in self.metadata['render_modes']
         self.render_mode = render_mode
 
-
+        self.timer = 0
         self.window = None
         self.clock = None
 
-    def __basicSpatial__(self):
+    def new_maze(self,maze):
+        self.__init__(maze,self.len_game,self.num_agents,self.vision_len,self.render_mode,self.obs_type)
+
+
+
+    def __spatial__(self, a):
         grid_size = 2*self.vision_len + 1
-        spatial_list = []
-        for a in range(self.num_agents):
-            vision = self._get_vision(a)
-            spatial = torch.zeros(grid_size,grid_size,3,dtype=torch.int)
-            x = self.vision_len
-            y = self.vision_len
-            spatial[y][x][0] = 0
-            spatial[y][x][1] = 0
-            spatial[y][x][2] = 255
+        
+        vision = self._get_vision(a)
+        spatial = np.zeros(shape=(grid_size,grid_size,3),dtype=int)
+        x = self.vision_len
+        y = self.vision_len
+        spatial[y][x][0] = 0
+        spatial[y][x][1] = 0
+        spatial[y][x][2] = 255
 
-            def place_value(val,x,y):
-                if val == 0:
-                    spatial[y][x][0] = 255
-                    spatial[y][x][1] = 255
-                    spatial[y][x][2] = 255
-                elif val == 2:
-                    spatial[y][x][0] = 255
-                    spatial[y][x][1] = 0
-                    spatial[y][x][2] = 0
-                elif val == 3:
-                    spatial[y][x][0] = 0
-                    spatial[y][x][1] = 255
-                    spatial[y][x][2] = 0
+        def place_value(val,x,y,dist,diag = False):
+            alpha = 0.3
+            beta = 0.99/dist
+            if val == 0 and diag == False:
+                spatial[y][x][0] = int(255* beta)
+                spatial[y][x][1] = int(255* beta)
+                spatial[y][x][2] = int(255* beta)
+            elif val == 2 and diag == False:
+                spatial[y][x][0] = int(255* beta)
+                spatial[y][x][1] = 0
+                spatial[y][x][2] = 0
+            elif val == 3 and diag == False:
+                spatial[y][x][0] = 0
+                spatial[y][x][1] = int(255* beta)
+                spatial[y][x][2] = 0
+
+            if val == 0 and diag:
+                spatial[y][x][0] = int(255*alpha*beta)
+                spatial[y][x][1] = int(255*alpha*beta)
+                spatial[y][x][2] = int(255*alpha*beta)
+            elif val == 2 and diag:
+                spatial[y][x][0] = int(255*alpha*beta)
+                spatial[y][x][1] = 0
+                spatial[y][x][2] = 0
+            elif val == 3 and diag:
+                spatial[y][x][0] = 0
+                spatial[y][x][1] = int(255*alpha*beta)
+                spatial[y][x][2] = 0
+        
+        # UP 
+        for i,val in enumerate(vision['UP']):
+            place_value(val,x,y-(i+1),i+1)
+        
+        # DOWN 
+        for i,val in enumerate(vision['DOWN']):
+            place_value(val,x,y+(i+1),i+1)
+
+        # LEFT 
+        for i,val in enumerate(vision['LEFT']):
+            place_value(val,x - (i+1),y,i+1)
+
+        # RIGHT
+        for i,val in enumerate(vision['RIGHT']):
+            place_value(val,x + (i+1),y,i+1)
+
+        # UP LEFT
+        for i,val in enumerate(vision['UP_LEFT']):
+            place_value(val, x-(i+1),y-(i+1),i+1,True)
+        
+        # UP RIGHT
+        for i,val in enumerate(vision['UP_RIGHT']):
+            place_value(val, x+(i+1),y-(i+1),i+1,True)
+
+        # DOWN LEFT
+        for i,val in enumerate(vision['DOWN_LEFT']):
+            place_value(val, x-(i+1),y+(i+1),i+1,True)
+
+        # DOWN RIGHT
+        for i,val in enumerate(vision['DOWN_RIGHT']):
+            place_value(val, x+(i+1),y+(i+1),i+1,True)
+        
             
-            # UP 
-            for i,val in enumerate(vision['UP']):
-                place_value(val,x,y-(i+1))
-            
-            # DOWN 
-            for i,val in enumerate(vision['DOWN']):
-                place_value(val,x,y+(i+1))
-
-            # LEFT 
-            for i,val in enumerate(vision['LEFT']):
-                place_value(val,x - (i+1),y)
-
-            # RIGHT
-            for i,val in enumerate(vision['RIGHT']):
-                place_value(val,x + (i+1),y)
-            spatial_list.append(spatial)
-        return spatial_list
+        return spatial
 
         
 
@@ -148,23 +194,44 @@ class maze_env(gym.Env):
 
         
     def _init_agents(self):
-        
+
         agent_positions = []
         agent_goals = []
         agents_done = []
-        pos = self.observation_space.sample()
-        for a in range(self.num_agents):
-            
-            agent_positions.append(pos[f'agent_{a}'])
-            agent_goals.append(pos[f'target_{a}'])
-            agents_done.append(False)
+
+
+        if self.obs_type == 'basic':
+            pos = self.observation_space.sample()
+
+            for a in range(self.num_agents):
+                agent_positions.append(pos[f'agent_{a}'])
+                agent_goals.append(pos[f'target_{a}'])
+                agents_done.append(False)
+        elif self.obs_type == 'rgb' or self.obs_type == 'spatial':
+            pos_set = set()
+
+            for a in range(self.num_agents):
+                pos = self.agent_target_obs_space.sample()
+                while pos in pos_set:
+                    pos = self.agent_target_obs_space.sample()
+                pos_set.add(pos)
+                agent_positions.append(pos)
+                agents_done.append(False)
+                t_pos = self.agent_target_obs_space.sample()
+                while t_pos in pos_set:
+                    t_pos = self.agent_target_obs_space.sample()
+                agent_goals.append(t_pos)
         
         self.agent_positions = agent_positions
         self.agent_goals = agent_goals
         self.agents_done = agents_done
     
     def manhattan_dist(self,point1, point2):
-        return abs(point1-point2)
+        x_1 = point1 % self.n_cols
+        x_2 = point2 % self.n_cols
+        y_1 = point2// self.n_cols
+        y_2 = point2//self.n_cols
+        return abs(x_1 - x_2) + abs(y_1 - y_2)
     
     def _get_vision(self,a):
         """ This looks in each of the directions of the agent and detects what it can see,
@@ -295,6 +362,98 @@ class maze_env(gym.Env):
             
         vision['RIGHT'] = right_vision
 
+        # UP LEFT
+        up_left_vision = []
+        pos_temp = pos
+        for i in range(self.vision_len):
+            
+            v = ((pos_temp % n_cols <= 0 or pos_temp//n_cols<=0) or
+                  (right_con_list[pos_temp-n_cols-1]==False or down_con_list[pos_temp-n_cols]==False)
+                   and (down_con_list[pos_temp-n_cols-1]==False or right_con_list[pos_temp - 1]==False))
+            if v == True:
+                rest_wall = [1 for _ in range(self.vision_len - i)]
+                up_left_vision += rest_wall
+                break
+            pos_temp = pos_temp -1 - n_cols
+            if v == False: # This means that there is not a wall here, so either this is another agent or goal
+                if pos_temp in agent_pos_set:
+                    up_left_vision.append(2)
+                elif pos_temp == agent_goal:
+                    up_left_vision.append(3)
+                else:
+                    up_left_vision.append(0)
+            
+        vision['UP_LEFT'] = up_left_vision
+
+        # UP RIGHT
+        up_right_vision = []
+        pos_temp = pos
+        for i in range(self.vision_len):
+            
+            v = ((pos_temp % n_cols >= n_cols-1 or pos_temp//n_cols<=0) or
+                  (right_con_list[pos_temp-n_cols]==False or down_con_list[pos_temp-n_cols]==False)
+                   and (down_con_list[pos_temp-n_cols+1]==False or right_con_list[pos_temp]==False))
+            if v == True:
+                rest_wall = [1 for _ in range(self.vision_len - i)]
+                up_right_vision += rest_wall
+                break
+            pos_temp = pos_temp - n_cols +1
+            if v == False: # This means that there is not a wall here, so either this is another agent or goal
+                if pos_temp in agent_pos_set:
+                    up_right_vision.append(2)
+                elif pos_temp == agent_goal:
+                    up_right_vision.append(3)
+                else:
+                    up_right_vision.append(0)
+            
+        vision['UP_RIGHT'] = up_right_vision
+
+        # DOWN LEFT
+        down_left_vision = []
+        pos_temp = pos
+        for i in range(self.vision_len):
+            
+            v = ((pos_temp % n_cols <= 0 or pos_temp//n_cols>=n_rows-1) or
+                  (right_con_list[pos_temp-1]==False or down_con_list[pos_temp-1]==False)
+                   and (down_con_list[pos_temp]==False or right_con_list[pos_temp+n_cols -1]==False))
+            if v == True:
+                rest_wall = [1 for _ in range(self.vision_len - i)]
+                down_left_vision += rest_wall
+                break
+            pos_temp  = pos_temp +n_cols -1
+            if v == False: # This means that there is not a wall here, so either this is another agent or goal
+                if pos_temp in agent_pos_set:
+                    down_left_vision.append(2)
+                elif pos_temp == agent_goal:
+                    down_left_vision.append(3)
+                else:
+                    down_left_vision.append(0)
+            
+        vision['DOWN_LEFT'] = down_left_vision
+
+        # DOWN RIGHT
+        down_right_vision = []
+        pos_temp = pos
+        for i in range(self.vision_len):
+            
+            v = ((pos_temp % n_cols >= n_cols-1 or pos_temp//n_cols>=n_rows-1) or
+                  (right_con_list[pos_temp]==False or down_con_list[pos_temp+1]==False)
+                   and (down_con_list[pos_temp]==False or right_con_list[pos_temp+n_cols]==False))
+            if v == True:
+                rest_wall = [1 for _ in range(self.vision_len - i)]
+                down_right_vision += rest_wall
+                break
+            pos_temp = pos_temp + n_cols + 1
+            if v == False: # This means that there is not a wall here, so either this is another agent or goal
+                if pos_temp in agent_pos_set:
+                    down_right_vision.append(2)
+                elif pos_temp == agent_goal:
+                    down_right_vision.append(3)
+                else:
+                    down_right_vision.append(0)
+            
+        vision['DOWN_RIGHT'] = down_right_vision
+
         return vision
         #return {
             #'UP': y == 0 or self.maze.connection_list[0][y-1][x] == False,
@@ -304,49 +463,66 @@ class maze_env(gym.Env):
         #}
 
     def reset(self,seed=None,options=None):
-        super().reset(seed=seed)
-        self._init_agents()
-        state = self._get_state()
-        info = self._get_info()
-        if self.render_mode == 'human':
-            self._render_frame()
-        
-        return state, info
+        if options!=None:
+            self.new_maze(options['new_maze'])
+            return self.reset()
+        else:
+            super().reset(seed=seed)
+            self.timer = 0
+            self._init_agents()
+            state = self._get_state()
+            info = self._get_info()
+            
+            if self.render_mode == 'human':
+                self._render_frame()
+            
+            return state, info
         
 
     def _get_state(self):
-        
+
         if self.obs_type == 'basic':
             state = {}
             for a in range(self.num_agents):
-                
                 state[f'agent_{a}'] = self.agent_positions[a]
                 state[f'target_{a}'] = self.agent_goals[a]
             return state
         elif self.obs_type == 'rgb':
             # Note that this is in (window,window,3)
             return self._render_frame()
+        elif self.obs_type == 'spatial':
+            state = {}
+            for a in range(self.num_agents):
+                state[f'local_{a}'] = self.__spatial__(a)
+                
+            return state
 
     
     def _get_info(self):
         info = {}
         for a in range(self.num_agents):
             pos = self.agent_positions[a]
+            t_pos = self.agent_goals[a]
             vision = self._get_vision(a)
-            goal_dist = self.manhattan_dist(pos,self.agent_goals[a])
+            goal_dist = self.manhattan_dist(pos,t_pos)
             info[f'agent_{a}'] = {'UP_vision' : vision['UP'],
                                   'DOWN_vision': vision['DOWN'],
                                   'LEFT_vision': vision['LEFT'],
                                   'RIGHT_vision': vision['RIGHT'],
+                                  'UP_LEFT_vision': vision['UP_LEFT'],
+                                  'UP_RIGHT_vision': vision['UP_RIGHT'],
+                                  'DOWN_LEFT_vision': vision['DOWN_LEFT'],
+                                  'DOWN_RIGHT_vision': vision['DOWN_RIGHT'],
                                   'man_dist': goal_dist,
                                   'done' : self.agents_done[a]}
-        #info['rgb'] = self._render_frame()
-        info['local'] = self.__localRegion__()
-        info['spatial'] = self.__basicSpatial__()
+            if self.obs_type == 'rgb' or self.obs_type=='spatial':
+                info[f'agent_{a}']['pos'] = pos
+                info[f'agent_{a}']['target'] = t_pos
+        info['timer']=self.timer
         return info
     
     def step(self,actions):
-
+        
         # Furthermore, if pos is the position
         # going down: pos + n_cols
         # going up: pos - n_cols
@@ -357,6 +533,8 @@ class maze_env(gym.Env):
         n_rows = self.n_rows
 
         agent_rewards = []
+
+        
         
         for i, action in enumerate(actions):
             rewards = 0
@@ -365,42 +543,50 @@ class maze_env(gym.Env):
 
             # move agent based on action, or don't move it if there is a wall
             if action == 1 and vision['UP'][0]!=1:
+                rewards +=1
                 pos -= n_cols
             elif action == 2 and vision['DOWN'][0]!=1:
+                rewards +=1
                 pos += n_cols
             elif action == 3 and vision['LEFT'][0]!=1:
+                rewards +=1
                 pos -= 1
             elif action == 4 and vision['RIGHT'][0]!=1:
+                rewards +=1
                 pos += 1
             else:
                 if action !=0:
-                    rewards -=0.01
+                    rewards -=1
+                rewards +=1
 
             if self.agent_positions[i]==self.agent_goals[i] or self.agents_done[i]:
-                rewards +=1
+                rewards +=100
                 self.agents_done[i] = True
                 
             else:
-                rewards -=0.01
+                rewards -=1*np.exp(self.timer)
                 self.agent_positions[i] = pos
                 self.agents_done[i] = False
+
+            
 
             agent_rewards.append(rewards)
 
         done = all(self.agents_done)
 
-        #if self.render_mode == 'human':
-        if self.obs_type == 'basic' or self.obs_type == '':
+        truncated = self.timer == self.len_game
+
+        if self.render_mode == 'human' and self.obs_type!='rgb':
             pixels = self._render_frame()
         
-        return self._get_state(),np.array(agent_rewards), done, False, self._get_info()
+        return self._get_state(),np.array(agent_rewards), done, truncated, self._get_info()
 
     def render(self):
         if self.render_mode == 'rgb_array':
             return self._render_frame()
 
     def _render_frame(self):
-
+        
         
         if self.window is None and self.render_mode == 'human':
             pygame.init()
