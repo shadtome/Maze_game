@@ -231,7 +231,7 @@ class Maze_Training:
 
                     self.optimizer.zero_grad()
                     loss,action_prob = self.compute_loss(batch_size=64,lambda_entropy=lambda_entropy)
-                    self.losses.append(loss.detach().numpy())
+                    self.losses.append(loss.detach().cpu().numpy())
                     loss.backward()
                     self.optimizer.step()
                     self.scheduler.step()
