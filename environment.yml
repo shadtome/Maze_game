@@ -31,4 +31,6 @@ dependencies:
       - tensorflow
       - copier
       - maze-dataset
+      - pygame
+      - gymnasium
       

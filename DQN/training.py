@@ -9,6 +9,7 @@ import random
 import matplotlib.pyplot as plt
 from torch.optim.lr_scheduler import StepLR
 import os
+import device
 
 
 class Maze_Training:
@@ -105,16 +106,16 @@ class Maze_Training:
         # we need everything to be a tensor to put into our neural network,
         # furthermore, we will need to permute our shape, since gymnasium outputs images
         # as (h,w,c)
-        state_tensor = torch.tensor(np.array(state),dtype=torch.float32)
+        state_tensor = torch.tensor(np.array(state),dtype=torch.float32,device = device.DEVICE)
         state_tensor = state_tensor.permute((0,3,1,2))
 
-        action_tensor = torch.tensor(np.array(action), dtype=torch.int64)
+        action_tensor = torch.tensor(np.array(action), dtype=torch.int64,device = device.DEVICE)
 
         next_state_tensor = torch.tensor(np.array(next_state),dtype=torch.float32)
         next_state_tensor = next_state_tensor.permute((0,3,1,2))
 
-        reward_tensor = torch.tensor(np.array(reward),dtype=torch.float32)
-        terminated_tensor = torch.tensor(np.array(terminated),dtype = torch.int64)
+        reward_tensor = torch.tensor(np.array(reward),dtype=torch.float32,device = device.DEVICE)
+        terminated_tensor = torch.tensor(np.array(terminated),dtype = torch.int64,device= device.DEVICE)
         return state_tensor,action_tensor,next_state_tensor,reward_tensor, terminated_tensor
 
     def compute_loss(self,batch_size, gamma=0.99,lambda_entropy = 0.01):
@@ -178,7 +179,7 @@ class Maze_Training:
                         ,maze=maze, render_mode='rgb_array',obs_type = 'spatial')
         
         # set up the statistics wrapper for the enviroment and the user wrappers
-        env = gym.wrappers.RecordEpisodeStatistics(env,buffer_length=n_episodes)
+        env = gym.wrappers.RecordEpisodeStatistics(env,stats_recorder_kwargs={"buffer_length": n_episodes})
         env = self.agents.add_wrappers(env)
         #env = gym.wrappers.NormalizeObservation(env)
             
