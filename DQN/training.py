@@ -112,7 +112,7 @@ class Maze_Training:
 
         action_tensor = torch.tensor(np.array(action), dtype=torch.int64,device = device.DEVICE)
 
-        next_state_tensor = torch.tensor(np.array(next_state),dtype=torch.float32)
+        next_state_tensor = torch.tensor(np.array(next_state),dtype=torch.float32,device=device.DEVICE)
         next_state_tensor = next_state_tensor.permute((0,3,1,2))
 
         reward_tensor = torch.tensor(np.array(reward),dtype=torch.float32,device = device.DEVICE)
