@@ -179,7 +179,8 @@ class Maze_Training:
                         ,maze=maze, render_mode='rgb_array',obs_type = 'spatial')
         
         # set up the statistics wrapper for the enviroment and the user wrappers
-        env = gym.wrappers.RecordEpisodeStatistics(env,stats_recorder_kwargs={"buffer_length": n_episodes})
+        #env = gym.wrappers.RecordEpisodeStatistics(env,buffer_length=n_episodes)
+        env = gym.wrappers.RecordEpisodeStatistics(env)
         env = self.agents.add_wrappers(env)
         #env = gym.wrappers.NormalizeObservation(env)
             
