@@ -37,6 +37,7 @@ class Maze_Training:
 
         # The target Q_net
         self.target_Q_net = self.agents.Q_fun.copy()
+        self.target_Q_net = self.target_Q_net.to(device=device.DEVICE)
 
         # Collection of mazes (can be single maze or multiple)
         self.mazes = maze_dataset

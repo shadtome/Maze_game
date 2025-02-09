@@ -36,9 +36,9 @@ class CNN_Q_fun(nn.Module):
     
     
     def copy(self):
-        copy = CNN_Q_fun(self.state_shape,self.n_actions)
-        copy.load_state_dict(self.state_dict())
-        return copy
+        q_copy = CNN_Q_fun(self.state_shape,self.n_actions)
+        q_copy.load_state_dict(self.state_dict())
+        return q_copy
 
 class CNN_Maze_Agents:
     def __init__(self,vision):
