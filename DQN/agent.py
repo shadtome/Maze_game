@@ -75,7 +75,7 @@ class CNN_Maze_Agents:
         self.__last_replay_agents_perspective__ = None
 
     def transform_to_nn(self,state):
-        result = torch.tensor(state,dtype=torch.float)
+        result = torch.tensor(state,dtype=torch.float,device = device.DEVICE)
         
         result = result.permute(2,0,1)
         result = result.unsqueeze(0)
@@ -83,6 +83,7 @@ class CNN_Maze_Agents:
         return result
     
     def transform_to_env(self,state):
+        result = state.squeeze(1).numpy()
         result = result.permute(1,2,0)
         result = result.numpy()
         return result

@@ -208,7 +208,8 @@ class Maze_Training:
             while not done:
                 
                 action = self.agents.get_action(env,self.n_agents,state,self.epsilon)
-                self.actions_taken.append(action)
+                self.actions_taken.append(action.detach().cpu())
+                
                 next_state, reward, terminated, truncated, info = env.step(action)
                 for a in range(self.n_agents):
                     self.replay_buffer.append([state[f'local_{a}'],action[a],
