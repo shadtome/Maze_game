@@ -207,11 +207,17 @@ class Maze_Training:
 
             
             while not done:
-                
+                #######################
+                # Get the action corresponding to the state
                 action = self.agents.get_action(env,self.n_agents,state,self.epsilon)
+
                 self.actions_taken.append(action)
 
+                #########################
+                # For each action, get the next state for each agent
                 next_state, reward, terminated, truncated, info = env.step(action)
+                ########################
+                # Put the states, actions and next states in to the replay buffer for training
                 for a in range(self.n_agents):
                     self.replay_buffer.append([state[f'local_{a}'],action[a],
                                                next_state[f'local_{a}'],reward[a],terminated])
@@ -219,14 +225,22 @@ class Maze_Training:
 
                 state = next_state
 
+                # This gets if all the agents go to their finish line or passes the threshold
+                # of the length of the game
                 done = truncated or terminated
                 
+                #######################
+                # After the replay is big enough we have gone through enough 
+                # iterations of the enviroment, enact a soft update of the target Q-net
                 if len(self.replay_buffer)>1000 and update_target % self.update_factor ==0:
                     #self.target_Q_net.load_state_dict(self.agent.Q_fun.state_dict())
                     self.soft_update(tau=0.01)
 
                 update_target+=1
-                
+
+
+                ########################
+                # Enact stochastic Gradient Descent 
                 if len(self.replay_buffer)>1000 and update_target % 64 == 0:
 
                     self.optimizer.zero_grad()
@@ -237,14 +251,14 @@ class Maze_Training:
                     self.scheduler.step()
                     if update_target % 200 ==0:
                         print(f'episode {ep} with loss {loss}')
-                    if update_target % 200 == 0:
+                    #if update_target % 200 == 0:
                         #print(f'action|state distribution: {action_prob.mean(0)}')
-                        print(f'action|state probablities: {action_prob[0]}\n {action_prob[-1]}')
+                        #print(f'action|state probablities: {action_prob[0]}\n {action_prob[-1]}')
 
-
+            # Recoard the cumulative reward for the agents
             for a in range(self.n_agents):
                 self.cum_reward[f'agent_{a}'].append(cum_reward[a])
-            print(f'cumulative reward: {cum_reward}')
+            #print(f'cumulative reward: {cum_reward}')
             
             self.decay_epsilon(ep,n_episodes)
 
@@ -255,7 +269,9 @@ class Maze_Training:
         env.close()
                 
     def results(self):
-        
+        """ This is used to print the losses over the training, 
+                and the distribution of actions.  Important for 
+                seeing if the agents are focusing too much on a action"""
         fig, axe = plt.subplots(self.n_agents+1,2,figsize=(10,10))
         
         axe[0][0].plot(self.losses)
@@ -287,12 +303,14 @@ class Maze_Training:
         plt.savefig(os.path.join(fd,'results.png'))
 
     def dist_rewards(self,dist):
+        """ Output the distribution of rewards, need the rewards wrapper to work"""
         keys = list(dist.keys())
         values = list(dist.values())
         plt.bar(keys,values)
         plt.savefig(os.path.join(self.filepath,'rewards_dist.png'))
 
     def save_checkpoint(self, episode):
+        """Save checkpoint if training stops"""
         if os.path.exists(self.filepath)==False:
             os.mkdir(self.filepath)
 
@@ -312,6 +330,7 @@ class Maze_Training:
         torch.save(training_checkpoint, os.path.join(self.filepath, 'training.pth'))
 
     def save(self):
+        """Save the model"""
         fd = os.getcwd()
         fd = os.path.join(fd,'trained_agents')
 
@@ -326,7 +345,7 @@ class Maze_Training:
         
 
     def load(self):
-
+        """Load the model for furhter training"""
         
         checkpoint = torch.load(os.path.join(self.filepath,'training.pth'))
         

@@ -13,18 +13,23 @@ import Maze_env
 
 class CNN_Q_fun(nn.Module):
     def __init__(self,state_shape,n_actions):
+        """THe Convolutional Neural network
+            State_shape: The state shape will be of the form (3,d,d) where d is the height and
+                        width of the image.  The images are neighborhood observations of the agent
+            n_actions: the number of actions the agent can take: traditional will be 5"""
         super().__init__()
         self.state_shape = state_shape
         self.n_actions = n_actions
         h = state_shape[1]
         w = h
-       # nn.Conv2d(in_channels=32,out_channels=64,kernel_size=3,stride=1,padding=1),
-            #nn.MaxPool2d(kernel_size=3,stride=1,padding=1),
+       
         self.Q_function = nn.Sequential(
             nn.Conv2d(in_channels=3,out_channels=32,kernel_size=3,stride=1,padding=1),
             nn.MaxPool2d(kernel_size=3,stride=1,padding=1),
+            nn.Conv2d(in_channels=32,out_channels=64,kernel_size=3,stride=1,padding=1),
+            nn.MaxPool2d(kernel_size=3,stride=1,padding=1),
             nn.Flatten(),
-            nn.Linear(32*h*w,32),
+            nn.Linear(64*h*w,32),
             nn.ReLU(),
             nn.Linear(32,n_actions)
         )
@@ -49,8 +54,6 @@ class CNN_Maze_Agents:
         ## vision length of the agents
         self.vision = vision
 
-        
-
         ####################
         # state shape (3, 2*vision + 1, 2*vision + 1) 
         # Local spatial images of the agents location 
@@ -60,6 +63,9 @@ class CNN_Maze_Agents:
         #Define Q_function neural network
         self.Q_fun = CNN_Q_fun(self.state_shape,self.n_actions)
         self.Q_fun.to(device.DEVICE)
+
+        ######################
+        # Used to randomly initalizze the weights
         #self.Q_fun.apply(self.weights_init)
 
         for layer in self.Q_fun.Q_function:
@@ -75,6 +81,8 @@ class CNN_Maze_Agents:
         self.__last_replay_agents_perspective__ = None
 
     def transform_to_nn(self,state):
+        """Used to transform information in enviroment numpy to Q-network pytorch,
+                plus permute and unsqueeze dimensions"""
         result = torch.tensor(state,dtype=torch.float,device = device.DEVICE)
         
         result = result.permute(2,0,1)
@@ -83,16 +91,24 @@ class CNN_Maze_Agents:
         return result
     
     def transform_to_env(self,state):
+        """ Transform Q-network pytorch information to the enviroment numpy"""
         result = state.squeeze(1).numpy()
         result = result.permute(1,2,0)
         result = result.numpy()
         return result
 
     def add_wrappers(self, env):
+        """Add wrappers into the enviroment"""
         env = rw.maze_runner_rewards(env)
         return env
 
     def get_action(self,env,num_agents,state,epsilon=0):
+        """ Get the actions from each agent from the state
+            env: the environment the agent is in.
+            num_agents: the number of agents in the environment
+            state: the states the agents are in
+            epsilon: the probability of taking a random action vs 1-epsilon to take 
+                    a Q-network action"""
         actions = []
         for a in range(num_agents):
             if np.random.random()<epsilon:
@@ -106,7 +122,7 @@ class CNN_Maze_Agents:
         return actions
     
     def compute_action_probs(self,state):
-        
+        """ Compute the probabilities of each action from the state using Q-Net"""
         state_tensor = self.transform_to_nn(state)
         q_values = self.Q_fun(state_tensor)
         
@@ -116,6 +132,7 @@ class CNN_Maze_Agents:
         
         
     def get_replay(self,env,num_agents,state,epsilon):
+        """ Get replay information from an action"""
 
         actions = self.get_action(env,num_agents,state,epsilon)
 
@@ -124,6 +141,15 @@ class CNN_Maze_Agents:
         return state, actions, next_state, reward, terminated
     
     def run_agent(self,maze, len_game = 1000, num_agents = 1,epsilon = 0, sample_prob = False):
+        """Run the agent in the enviroment that is human readable using pygame.
+            maze: a maze from the maze_dataset, needs the connection_list,
+            len_game: max length of steps in the game
+            num_agents: the number of agents in the enviroment with the same Q-net
+            epsilon: the probability of using a random action
+            sample_prob: outputs the probabilities of actions from the states"""
+        
+        #####################
+        # Agents perspective, saved for observation after playing in the environment
         agents_per = {}
         
         with torch.no_grad():
@@ -163,15 +189,33 @@ class CNN_Maze_Agents:
             print(f'cumulative reward: {cum_reward}')
 
     def animate_last_replay(self,agent_id):
+        """Takes the last run_agent and saved perspectives of the agents and 
+            returns a animation of it
+            agent_id: gives the id of the agent for the perspective we want"""
         seq_anim = self.__last_replay_agents_perspective__[f'agent_{agent_id}']
         html = create_animation(seq_anim)
         display(html)
 
-    def save(self,filepath,name):
-        torch.save(self.Q_fun.state_dict(),os.path.join(filepath,f'{name}.pth'))
+    def save(self,name):
+        """Save the agents model"""
+        fd = os.getcwd()
+        fd = os.path.join(fd,'trained_agents')
 
-    def load(self,filepath,name):
-        self.Q_fun.load_state_dict(torch.load(os.path.join(filepath, f'{name}.pth')))
+        if os.path.exists(fd)==False:
+            os.mkdir(fd)
+
+        fd = os.path.join(fd,f'{name}')
+        if os.path.exists(fd)==False:
+            os.mkdir(fd)
+        
+        torch.save(self.Q_fun.state_dict(),os.path.join(fd,f'agent.pth'))
+
+    def load(self,name):
+        """Load the agents model"""
+        fd = os.getcwd()
+        fd = os.path.join(fd,'trained_agents')
+        fd = os.path.join(fd,f'{name}')
+        self.Q_fun.load_state_dict(torch.load(os.path.join(fd, f'agent.pth')))
 
     def weights_init(self,m):
         classname = m.__class__.__name__
