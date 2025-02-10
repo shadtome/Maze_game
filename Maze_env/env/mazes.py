@@ -565,7 +565,7 @@ class maze_env(gym.Env):
                 self.agents_done[i] = True
                 
             else:
-                rewards -=1*np.exp(self.timer)
+                rewards -=1*int(self.timer/self.len_game+1)
                 self.agent_positions[i] = pos
                 self.agents_done[i] = False
 

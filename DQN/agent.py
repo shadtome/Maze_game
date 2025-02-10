@@ -14,16 +14,17 @@ import Maze_env
 class CNN_Q_fun(nn.Module):
     def __init__(self,state_shape,n_actions):
         """THe Convolutional Neural network
-            State_shape: The state shape will be of the form (3,d,d) where d is the height and
-                        width of the image.  The images are neighborhood observations of the agent
+            State_shape: The state shape will be of the form (3,h,w) where h is the height and
+                        w the width of the image.  The images are neighborhood observations of the agent
             n_actions: the number of actions the agent can take: traditional will be 5"""
         super().__init__()
         self.state_shape = state_shape
         self.n_actions = n_actions
         h = state_shape[1]
-        w = h
+        w = state_shape[2]
        
         self.Q_function = nn.Sequential(
+            nn.BatchNorm2d(num_features=3),
             nn.Conv2d(in_channels=3,out_channels=32,kernel_size=3,stride=1,padding=1),
             nn.MaxPool2d(kernel_size=3,stride=1,padding=1),
             nn.Conv2d(in_channels=32,out_channels=64,kernel_size=3,stride=1,padding=1),
@@ -31,11 +32,13 @@ class CNN_Q_fun(nn.Module):
             nn.Flatten(),
             nn.Linear(64*h*w,32),
             nn.ReLU(),
-            nn.Linear(32,n_actions)
+            nn.Linear(32,12),
+            nn.ReLU(),
+            nn.Linear(12,n_actions)
         )
 
     def forward(self,x):
-        #x = self.normalize(x)
+        
         x = self.Q_function(x)
         return x
     
@@ -66,13 +69,14 @@ class CNN_Maze_Agents:
 
         ######################
         # Used to randomly initalizze the weights
-        #self.Q_fun.apply(self.weights_init)
+        self.Q_fun.apply(self.weights_init)
 
-        for layer in self.Q_fun.Q_function:
-            if isinstance(layer, nn.Linear):
-                nn.init.kaiming_uniform_(layer.weight, mode='fan_in', nonlinearity='relu')
-                if layer.bias is not None:
-                    nn.init.zeros_(layer.bias)
+
+        #for layer in self.Q_fun.Q_function:
+         #   if isinstance(layer, nn.Linear):
+          #      nn.init.kaiming_uniform_(layer.weight, mode='fan_in', nonlinearity='relu')
+           #     if layer.bias is not None:
+            #        nn.init.zeros_(layer.bias)
 
 
 
@@ -180,8 +184,6 @@ class CNN_Maze_Agents:
                 if sample_prob == True:
                     pic = self.compute_action_probs(next_obs['local_0'])
                     print(pic.numpy())
-
-                print(info['timer'])
 
                 done = terminated or truncated
                 obs = next_obs

@@ -134,7 +134,7 @@ class Maze_Training:
         # get our policy q-values 
         q_values = self.agents.Q_fun(state)
         selected_q_values = q_values.gather(1,actions.unsqueeze(1)).squeeze(1)
-
+        #print('q_values',torch.isinf(q_values).any())
         with torch.no_grad():
             # Next, we calculate the the target q-values which are maximized
             next_q_values = self.target_Q_net(next_states).max(1)[0]
@@ -149,7 +149,9 @@ class Maze_Training:
         # and compute its entropy over all the actions, and take the average over the states.
         action_probs = torch.softmax(q_values,dim=1)
         entropy = -torch.sum(action_probs * torch.log(action_probs + 1e-6),dim=1)
+        #print('entropy',torch.isinf(entropy).any())
         loss -=lambda_entropy * entropy.mean()
+        #print('Loss',torch.isinf(loss).any())
         return loss, action_probs
     
     def decay_epsilon(self,episode,n_episodes):
@@ -194,7 +196,7 @@ class Maze_Training:
                 maze = self.mazes[random_index]
 
             state,info = env.reset(options = {'new_maze': maze})
-            print(f'episode {ep}')
+            #print(f'episode {ep}')
             done = False
 
             cum_reward = [0 for _ in range(self.n_agents)]

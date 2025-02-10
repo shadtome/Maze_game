@@ -27,7 +27,7 @@ class maze_runner_rewards(Wrapper):
                 reward[k]+=1
 
             if not info[f'agent_{k}']['done'] and truncated:
-                reward[k] -=100
+                reward[k] -=50
             
 
         
