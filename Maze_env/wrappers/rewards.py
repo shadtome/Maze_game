@@ -25,6 +25,8 @@ class maze_runner_rewards(Wrapper):
 
             if self.agents_dist[f'agent_{k}'][0]>self.agents_dist[f'agent_{k}'][1]:
                 reward[k]+=1
+            else:
+                reward[k]-=0.5
 
             if not info[f'agent_{k}']['done'] and truncated:
                 reward[k] -=50

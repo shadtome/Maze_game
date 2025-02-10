@@ -1,6 +1,8 @@
 from torch.utils.data import Dataset
 from maze_dataset.generation import LatticeMazeGenerators
 from maze_dataset.generation import generators
+from maze_dataset.plotting import MazePlot
+import matplotlib.pyplot as plt
 
 class Maze_dataset(Dataset):
     def __init__(self,num_mazes,shape = (10,10),maze_type = 'dfs'):
@@ -58,3 +60,9 @@ class Maze_dataset(Dataset):
     
     def __getitem__(self,idx):
         return self.mazes[idx]
+    
+
+    def show_maze(self,idx):
+        MazePlot(self.__getitem__(idx)).plot()
+
+        plt.show()
