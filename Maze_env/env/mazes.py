@@ -534,7 +534,8 @@ class maze_env(gym.Env):
 
         agent_rewards = []
 
-        
+        # Timer for the environment
+        self.timer+=1
         
         for i, action in enumerate(actions):
             rewards = 0

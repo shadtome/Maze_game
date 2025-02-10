@@ -181,6 +181,8 @@ class CNN_Maze_Agents:
                     pic = self.compute_action_probs(next_obs['local_0'])
                     print(pic.numpy())
 
+                print(info['timer'])
+
                 done = terminated or truncated
                 obs = next_obs
                 self.__last_replay_agents_perspective__ = agents_per
