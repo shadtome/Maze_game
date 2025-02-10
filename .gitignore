@@ -166,3 +166,8 @@ cython_debug/
 #  ############# 
 # data and trained agents
 trained_agents/
+
+
+
+# Kaggle jobs
+kaggle_job/
