@@ -18,29 +18,44 @@ class CNN_Q_fun(nn.Module):
                         w the width of the image.  The images are neighborhood observations of the agent
             n_actions: the number of actions the agent can take: traditional will be 5"""
         super().__init__()
-        self.state_shape = state_shape
-        self.n_actions = n_actions
+        self.state_shape = state_shape # Shape of the images for the local information
+        self.n_actions = n_actions # number of actions
         h = state_shape[1]
         w = state_shape[2]
+
+
        
-        self.Q_function = nn.Sequential(
-            nn.BatchNorm2d(num_features=3),
-            nn.Conv2d(in_channels=3,out_channels=32,kernel_size=3,stride=1,padding=1),
-            nn.MaxPool2d(kernel_size=3,stride=1,padding=1),
-            nn.Conv2d(in_channels=32,out_channels=64,kernel_size=3,stride=1,padding=1),
-            nn.MaxPool2d(kernel_size=3,stride=1,padding=1),
+        self.CNN_function= nn.Sequential(
+            nn.Conv2d(in_channels=3,out_channels=32,kernel_size=3,stride=2),
+            nn.ReLU(),
+            nn.Conv2d(in_channels=32,out_channels=64,kernel_size=2,stride=1),
+            nn.ReLU(),
             nn.Flatten(),
-            nn.Linear(64*h*w,32),
+            nn.Linear(64*int((h-3)/2)*int((w-3)/2),32),
+            nn.ReLU(),
+        )
+        # Takes inputs of the form (pos,g_pos,done,dist)
+        self.global_function = nn.Sequential(
+            nn.Linear(4,32),
             nn.ReLU(),
             nn.Linear(32,12),
             nn.ReLU(),
-            nn.Linear(12,n_actions)
         )
 
-    def forward(self,x):
+        self.final_function =nn.Sequential(
+            nn.Linear(32 + 12,12),
+            nn.ReLU(),
+            nn.Linear(12,self.n_actions)
+        ) 
+
+    def forward(self,x,y):
         
-        x = self.Q_function(x)
-        return x
+        x = self.CNN_function(x)
+        y = self.global_function(y)
+        
+        combined = torch.cat((x,y),dim=-1)
+        result = self.final_function(combined)
+        return result
     
     
     def copy(self):
@@ -49,7 +64,7 @@ class CNN_Q_fun(nn.Module):
         return q_copy
 
 class CNN_Maze_Agents:
-    def __init__(self,vision):
+    def __init__(self,vision,action_type = 'full'):
         """Initalize the base agent class, put the vision length to give the agents"""
 
         ################
@@ -60,11 +75,15 @@ class CNN_Maze_Agents:
         ####################
         # state shape (3, 2*vision + 1, 2*vision + 1) 
         # Local spatial images of the agents location 
-        self.state_shape = (3,2*vision + 1, 2*vision + 1)
-        self.n_actions = 5 # stay and the cardinal directions
+        self.CNN_shape = (3,2*vision + 1, 2*vision + 1)
+        if action_type == 'full':
+            self.n_actions = 5 # stay and the cardinal directions
+        elif action_type == 'cardinal':
+            self.n_actions = 4 # Cardinal Directions
+        self.action_type = action_type
 
         #Define Q_function neural network
-        self.Q_fun = CNN_Q_fun(self.state_shape,self.n_actions)
+        self.Q_fun = CNN_Q_fun(self.CNN_shape,self.n_actions)
         self.Q_fun.to(device.DEVICE)
 
         ######################
@@ -84,22 +103,33 @@ class CNN_Maze_Agents:
         # Animation and replay purposes
         self.__last_replay_agents_perspective__ = None
 
-    def transform_to_nn(self,state):
+    def transform_local_to_nn(self,local_state):
         """Used to transform information in enviroment numpy to Q-network pytorch,
                 plus permute and unsqueeze dimensions"""
-        result = torch.tensor(state,dtype=torch.float,device = device.DEVICE)
+        
+        result = torch.tensor(local_state,dtype=torch.float,device = device.DEVICE)
         
         result = result.permute(2,0,1)
         result = result.unsqueeze(0)
-        result = (result - 127.5)/127.5
+        result = result/255
         return result
     
-    def transform_to_env(self,state):
+    def transform_global_to_nn(self,global_state):
+        result = torch.tensor(global_state,dtype=torch.float32,device=device.DEVICE)
+        result[0:2] = result[0:2]/(self.CNN_shape[1]*self.CNN_shape[2] -1)
+        result[3] = result[3]/(self.CNN_shape[1] + self.CNN_shape[2])
+        result = result.unsqueeze(0)
+        return result
+    
+    def transform_local_to_env(self,local_state):
         """ Transform Q-network pytorch information to the enviroment numpy"""
-        result = state.squeeze(1).numpy()
+        result = local_state.squeeze(1).numpy()
         result = result.permute(1,2,0)
         result = result.numpy()
         return result
+    
+    def transform_global_to_env(self,global_state):
+        return global_state.numpy()
 
     def add_wrappers(self, env):
         """Add wrappers into the enviroment"""
@@ -119,16 +149,18 @@ class CNN_Maze_Agents:
                 actions.append(int(env.action_space.sample()))
             else:
                 
-                state_tensor = self.transform_to_nn(state[f'local_{a}'])
-                q_values = self.Q_fun(state_tensor)
+                local_state_tensor = self.transform_local_to_nn(state[f'local_{a}'])
+                global_state_tensor = self.transform_global_to_nn(state[f'global_{a}'])
+                q_values = self.Q_fun(local_state_tensor,global_state_tensor)
                 actions.append(int(q_values.argmax().item()))
                 
         return actions
     
-    def compute_action_probs(self,state):
+    def compute_action_probs(self,local_state,global_state):
         """ Compute the probabilities of each action from the state using Q-Net"""
-        state_tensor = self.transform_to_nn(state)
-        q_values = self.Q_fun(state_tensor)
+        local_state_tensor = self.transform_local_to_nn(local_state)
+        global_state_tensor = self.transform_global_to_nn(global_state)
+        q_values = self.Q_fun(local_state_tensor,global_state_tensor)
         
         #q_values = self.Q_fun(state_tensor)
         action_probs = torch.softmax(q_values,dim=1)
@@ -159,7 +191,8 @@ class CNN_Maze_Agents:
         with torch.no_grad():
             # make enviroment for testing
             env = gym.make('Maze_env/MazeRunner-v0',len_game = len_game,num_agents=num_agents,vision_len=self.vision,maze=maze,
-                           render_mode='human',obs_type = 'spatial')
+                           render_mode='human',obs_type = 'spatial',
+                           action_type = self.action_type)
 
             env = self.add_wrappers(env)
 
@@ -188,6 +221,7 @@ class CNN_Maze_Agents:
                 done = terminated or truncated
                 obs = next_obs
                 self.__last_replay_agents_perspective__ = agents_per
+
             env.close()
             self.__last_replay_agents_perspective__ = agents_per
             print(f'cumulative reward: {cum_reward}')
@@ -222,12 +256,14 @@ class CNN_Maze_Agents:
         self.Q_fun.load_state_dict(torch.load(os.path.join(fd, f'agent.pth')))
 
     def weights_init(self,m):
-        classname = m.__class__.__name__
-        if classname.find('Conv') != -1:
-            nn.init.normal_(m.weight.data,0.0,0.02)
-        elif classname.find('BatchNorm') !=-1:
-            nn.init.normal_(m.weight.data,1.0,0.02)
-            nn.init.constant_(m.bias.data,0)
+        if isinstance(m, nn.Conv2d):
+            nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')  # Kaiming He for conv layers
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)  # Bias = 0 (standard practice)
+        elif isinstance(m, nn.Linear):
+            nn.init.kaiming_normal_(m.weight, nonlinearity='relu')  # Kaiming He for fully connected layers
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
 
 
 

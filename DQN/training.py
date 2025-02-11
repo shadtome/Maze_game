@@ -13,8 +13,8 @@ import device
 
 
 class Maze_Training:
-    def __init__(self,name,maze_dataset,len_game = 1000,n_agents=1,vision=1,lr=1e-3,start_epsilon=1,
-                  final_epsilon=0.1, n_episodes=100, update_factor=500):
+    def __init__(self,name,maze_dataset,len_game = 1000,n_agents=1,vision=1, action_type = 'full',
+                 lr=1e-3,start_epsilon=1,final_epsilon=0.1, n_episodes=100, update_factor=500):
         """Used to train a deep Q-network for agents exploring a maze.
 
         maze_dataset: a dataset of mazes that come from the maze_dataset package
@@ -33,7 +33,7 @@ class Maze_Training:
         update_factor: This how many times the target Will change this"""
 
         # The agent with the Q_function
-        self.agents = agent.CNN_Maze_Agents(vision)
+        self.agents = agent.CNN_Maze_Agents(vision,action_type)
 
         # The target Q_net
         self.target_Q_net = self.agents.Q_fun.copy()
@@ -45,11 +45,12 @@ class Maze_Training:
         # Number of agents
         self.n_agents = n_agents
 
+
         # max length of each episode
         self.len_game = len_game
 
         # Replay buffer
-        self.replay_buffer = deque(maxlen=10000)
+        self.replay_buffer = deque(maxlen=100000)
 
         # file name for saving and loading
         self.name = name
@@ -102,22 +103,31 @@ class Maze_Training:
         # sample from the buffer
         sample = random.sample(self.replay_buffer,batch_size)
         # get the information
-        state, action, next_state, reward,terminated = zip(*sample)
+        local_state,global_state, action, next_local_state, next_global_state, reward,terminated = zip(*sample)
 
         # we need everything to be a tensor to put into our neural network,
         # furthermore, we will need to permute our shape, since gymnasium outputs images
         # as (h,w,c)
-        state_tensor = torch.tensor(np.array(state),dtype=torch.float32,device = device.DEVICE)
-        state_tensor = state_tensor.permute((0,3,1,2))
+        local_st = torch.tensor(np.array(local_state),dtype=torch.float32,device = device.DEVICE)
+        local_st = local_st.permute((0,3,1,2))
+        local_st = local_st/255
 
-        action_tensor = torch.tensor(np.array(action), dtype=torch.int64,device = device.DEVICE)
+        global_st = torch.tensor(np.array(global_state),dtype=torch.float32,device = device.DEVICE)
+        
+        global_st[:,0:2] = global_st[:,0:2]/(self.agents.CNN_shape[1]*self.agents.CNN_shape[2]-1)
+        global_st[:,3] = global_st[:,3]/(self.agents.CNN_shape[1] + self.agents.CNN_shape[2])
 
-        next_state_tensor = torch.tensor(np.array(next_state),dtype=torch.float32,device=device.DEVICE)
-        next_state_tensor = next_state_tensor.permute((0,3,1,2))
+        action_t = torch.tensor(np.array(action), dtype=torch.int64,device = device.DEVICE)
 
-        reward_tensor = torch.tensor(np.array(reward),dtype=torch.float32,device = device.DEVICE)
-        terminated_tensor = torch.tensor(np.array(terminated),dtype = torch.int64,device= device.DEVICE)
-        return state_tensor,action_tensor,next_state_tensor,reward_tensor, terminated_tensor
+        next_local_st = torch.tensor(np.array(next_local_state),dtype=torch.float32,device=device.DEVICE)
+        next_local_st = next_local_st.permute((0,3,1,2))
+
+        next_global_st = torch.tensor(np.array(next_global_state),dtype=torch.float32,device = device.DEVICE)
+
+        reward_t = torch.tensor(np.array(reward),dtype=torch.float32,device = device.DEVICE)
+        terminated_t = torch.tensor(np.array(terminated),dtype = torch.int64,device= device.DEVICE)
+
+        return local_st,global_st,action_t,next_local_st,next_global_st,reward_t, terminated_t
 
     def compute_loss(self,batch_size, gamma=0.99,lambda_entropy = 0.01):
         """This is to compute the loss between the target Q-network and the policy Q-network.
@@ -129,15 +139,15 @@ class Maze_Training:
                         we want to maximize entropy."""
         
         # Get the states and actions
-        state, actions,next_states, rewards, terminated = self.sample_replay(batch_size)
+        local_s,global_s, actions,next_local_s,next_global_s, rewards, terminated = self.sample_replay(batch_size)
         
         # get our policy q-values 
-        q_values = self.agents.Q_fun(state)
+        q_values = self.agents.Q_fun(local_s,global_s)
         selected_q_values = q_values.gather(1,actions.unsqueeze(1)).squeeze(1)
         #print('q_values',torch.isinf(q_values).any())
         with torch.no_grad():
             # Next, we calculate the the target q-values which are maximized
-            next_q_values = self.target_Q_net(next_states).max(1)[0]
+            next_q_values = self.target_Q_net(next_local_s,next_global_s).max(1)[0]
 
             # Then we calculate the estimated Bellmann expectation operator
             target = rewards + gamma*next_q_values * (1-terminated.float())
@@ -160,13 +170,16 @@ class Maze_Training:
         final_epsilon = self.final_epsilon
        
         #self.epsilon = max(final_epsilon,start_epsilon + ((final_epsilon-start_epsilon)/n_episodes)*episode )
-        self.epsilon = max(final_epsilon, start_epsilon * (0.9995 ** episode))
+        self.epsilon = max(final_epsilon,self.epsilon * (0.9995))
 
     def train(self,lambda_entropy = 0.01):
         """The deep Q-network training for our maze runner"""
 
         # set up some initial variables for training
         n_episodes = self.n_episodes
+
+        # discount factor
+        gamma = 0.99
 
         # This is used to change the maze enviroment to train in, so that the agent 
         # does not hyper learn one maze
@@ -179,7 +192,8 @@ class Maze_Training:
         # set up our maze enviroment for spatial learning
         env = gym.make('Maze_env/MazeRunner-v0',len_game= self.len_game,
                        num_agents=self.n_agents,vision_len=self.agents.vision
-                        ,maze=maze, render_mode='rgb_array',obs_type = 'spatial')
+                        ,maze=maze, render_mode='rgb_array',obs_type = 'spatial',
+                        action_type=self.agents.action_type)
         
         # set up the statistics wrapper for the enviroment and the user wrappers
         #env = gym.wrappers.RecordEpisodeStatistics(env,buffer_length=n_episodes)
@@ -201,6 +215,7 @@ class Maze_Training:
 
             cum_reward = [0 for _ in range(self.n_agents)]
 
+
             #self.target_Q_net.load_state_dict(self.agents.Q_fun.state_dict())
 
             #for param in self.agents.Q_fun.parameters():
@@ -221,8 +236,9 @@ class Maze_Training:
                 ########################
                 # Put the states, actions and next states in to the replay buffer for training
                 for a in range(self.n_agents):
-                    self.replay_buffer.append([state[f'local_{a}'],action[a],
-                                               next_state[f'local_{a}'],reward[a],terminated])
+                    self.replay_buffer.append([state[f'local_{a}'],state[f'global_{a}'],action[a],
+                                               next_state[f'local_{a}'],next_state[f'global_{a}'],
+                                               reward[a],terminated])
                     cum_reward[a] += reward[a]
 
                 state = next_state
@@ -234,7 +250,7 @@ class Maze_Training:
                 #######################
                 # After the replay is big enough we have gone through enough 
                 # iterations of the enviroment, enact a soft update of the target Q-net
-                if len(self.replay_buffer)>1000 and update_target % self.update_factor ==0:
+                if len(self.replay_buffer)>=10000 and update_target % self.update_factor ==0:
                     #self.target_Q_net.load_state_dict(self.agent.Q_fun.state_dict())
                     self.soft_update(tau=0.01)
 
@@ -243,26 +259,31 @@ class Maze_Training:
 
                 ########################
                 # Enact stochastic Gradient Descent 
-                if len(self.replay_buffer)>1000 and update_target % 64 == 0:
+                if len(self.replay_buffer)>=10000 and update_target % 4 == 0:
 
                     self.optimizer.zero_grad()
                     loss,action_prob = self.compute_loss(batch_size=64,lambda_entropy=lambda_entropy)
                     self.losses.append(loss.detach().cpu().numpy())
                     loss.backward()
+
+                    # Implement gradient cutoffs
+                    nn.utils.clip_grad_norm_(self.agents.Q_fun.parameters(),1)
+
                     self.optimizer.step()
                     self.scheduler.step()
-                    if update_target % 200 ==0:
+                    if update_target % 100 ==0:
                         print(f'episode {ep} with loss {loss}')
                     #if update_target % 200 == 0:
                         #print(f'action|state distribution: {action_prob.mean(0)}')
                         #print(f'action|state probablities: {action_prob[0]}\n {action_prob[-1]}')
-
+                        
+                    self.decay_epsilon(ep,n_episodes)
             # Recoard the cumulative reward for the agents
             for a in range(self.n_agents):
                 self.cum_reward[f'agent_{a}'].append(cum_reward[a])
             #print(f'cumulative reward: {cum_reward}')
             
-            self.decay_epsilon(ep,n_episodes)
+            
 
             #checkpoint save:
             #if ep %20==0:

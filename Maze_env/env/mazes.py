@@ -20,8 +20,10 @@ import torch
 
 class maze_env(gym.Env):
     metadata = {'render_modes': ['human','rgb_array'],'render_fps':4,
-                'obs_type': ['rgb','spatial','basic']}
-    def __init__(self, maze, len_game=1000,num_agents=1,vision_len = 1, render_mode = None, obs_type=None):
+                'obs_type': ['rgb','spatial','basic'],
+                'action_type': ['full','cardinal']}
+    def __init__(self, maze, len_game=1000,num_agents=1,vision_len = 1, 
+                 action_type = 'full',render_mode = None, obs_type=None):
         super(maze_env, self).__init__()
 
         
@@ -46,8 +48,15 @@ class maze_env(gym.Env):
         self.obs_type = obs_type
 
         # Action space
-        self.action_space = gym.spaces.Discrete(5)
-        self.actions = ['STAY','UP','DOWN','LEFT','RIGHT']
+        assert action_type is None or action_type in self.metadata['action_type']
+        self.action_type = action_type
+
+        if action_type == 'full':
+            self.action_space = gym.spaces.Discrete(5)
+            self.actions = ['UP','DOWN','LEFT','RIGHT','STAY']
+        elif action_type == 'cardinal':
+            self.action_space = gym.spaces.Discrete(4)
+            self.actions = ['UP','DOWN','LEFT','RIGHT']
 
         self.agent_target_obs_space = gym.spaces.Discrete(self.n_cols*self.n_rows)
 
@@ -69,10 +78,18 @@ class maze_env(gym.Env):
         
         elif self.obs_type == 'spatial':
             obs = dict()
+            max_pos = self.n_rows*self.n_cols-1
             for a in range(self.num_agents):
                 
-                obs[f'local_{a}'] = gym.spaces.Box(0,255,shape = (2*self.vision_len + 1,2*self.vision_len+1,3),dtype=int)
-                
+                obs[f'local_{a}'] = gym.spaces.Box(low=0,
+                                                   high=255,
+                                                   shape = (2*self.vision_len + 1,2*self.vision_len+1,3),
+                                                   dtype=int)
+                obs[f'global_{a}'] = gym.spaces.Box(low=np.array([0,0,0,0]),
+                                                    high=np.array([max_pos,max_pos,1,self.n_cols + self.n_rows]),
+                                                    shape=(4,),
+                                                    dtype=int)
+
             self.observation_space = gym.spaces.Dict(obs)
         
 
@@ -85,9 +102,19 @@ class maze_env(gym.Env):
         self.clock = None
 
     def new_maze(self,maze):
-        self.__init__(maze,self.len_game,self.num_agents,self.vision_len,self.render_mode,self.obs_type)
+        self.__init__(maze,self.len_game,self.num_agents,
+                      self.vision_len,self.action_type,self.render_mode,self.obs_type)
 
 
+    def __global__(self,a):
+        global_var = []
+        pos = self.agent_positions[a]
+        g_pos = self.agent_goals[a]
+        global_var.append(pos)
+        global_var.append(g_pos)
+        global_var.append(self.agents_done[a])
+        global_var.append(self.manhattan_dist(pos,g_pos))
+        return np.array(global_var)
 
     def __spatial__(self, a):
         grid_size = 2*self.vision_len + 1
@@ -494,6 +521,7 @@ class maze_env(gym.Env):
             state = {}
             for a in range(self.num_agents):
                 state[f'local_{a}'] = self.__spatial__(a)
+                state[f'global_{a}'] = self.__global__(a)
                 
             return state
 
@@ -519,6 +547,7 @@ class maze_env(gym.Env):
                 info[f'agent_{a}']['pos'] = pos
                 info[f'agent_{a}']['target'] = t_pos
         info['timer']=self.timer
+        info['n_agents'] = self.num_agents
         return info
     
     def step(self,actions):
@@ -543,29 +572,29 @@ class maze_env(gym.Env):
             vision = self._get_vision(i)
 
             # move agent based on action, or don't move it if there is a wall
-            if action == 1 and vision['UP'][0]!=1:
-                rewards +=1
+            if action == 0 and vision['UP'][0]!=1:
+                rewards +=0.1
                 pos -= n_cols
-            elif action == 2 and vision['DOWN'][0]!=1:
-                rewards +=1
+            elif action == 1 and vision['DOWN'][0]!=1:
+                rewards +=0.1
                 pos += n_cols
-            elif action == 3 and vision['LEFT'][0]!=1:
-                rewards +=1
+            elif action == 2 and vision['LEFT'][0]!=1:
+                rewards +=0.1
                 pos -= 1
-            elif action == 4 and vision['RIGHT'][0]!=1:
-                rewards +=1
+            elif action == 3 and vision['RIGHT'][0]!=1:
+                rewards +=0.1
                 pos += 1
             else:
-                if action !=0:
-                    rewards -=10
-                rewards +=1
+                if action !=4:
+                    rewards -=1
+                rewards +=0.1
 
             if self.agent_positions[i]==self.agent_goals[i] or self.agents_done[i]:
-                rewards +=100
+                rewards +=self.len_game - self.timer + 10
                 self.agents_done[i] = True
                 
             else:
-                rewards -=1*int(50*self.timer/self.len_game+1)
+                rewards -=0.1
                 self.agent_positions[i] = pos
                 self.agents_done[i] = False
 
