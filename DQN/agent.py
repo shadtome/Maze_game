@@ -43,7 +43,9 @@ class CNN_Q_fun(nn.Module):
         )
 
         self.final_function =nn.Sequential(
-            nn.Linear(32 + 12,12),
+            nn.Linear(32 + 4,32),
+            nn.ReLU(),
+            nn.Linear(32,12),
             nn.ReLU(),
             nn.Linear(12,self.n_actions)
         ) 
@@ -51,7 +53,6 @@ class CNN_Q_fun(nn.Module):
     def forward(self,x,y):
         
         x = self.CNN_function(x)
-        y = self.global_function(y)
         
         combined = torch.cat((x,y),dim=-1)
         result = self.final_function(combined)
@@ -133,7 +134,7 @@ class CNN_Maze_Agents:
 
     def add_wrappers(self, env):
         """Add wrappers into the enviroment"""
-        env = rw.maze_runner_rewards(env)
+        #env = rw.maze_runner_rewards(env)
         return env
 
     def get_action(self,env,num_agents,state,epsilon=0):

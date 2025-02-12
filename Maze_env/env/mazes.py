@@ -31,6 +31,8 @@ class maze_env(gym.Env):
         self.window_size = 512 #512
 
         self.maze = maze
+
+        
         
         self.n_cols = maze.grid_shape[1]
         self.n_rows = maze.grid_shape[0]
@@ -42,6 +44,7 @@ class maze_env(gym.Env):
         self.agent_positions = None
         self.agent_goals = None
         self.agents_done = None
+        self.agents_path = None
 
         # Define observation and action spaces
         assert obs_type is None or obs_type in self.metadata['obs_type']
@@ -218,22 +221,35 @@ class maze_env(gym.Env):
                                    x-vision_ext - pix_square_size//2:x+vision_ext + pix_square_size//2]
             local.append(region.permute(1,2,0))
         return local
-
+    
+        
         
     def _init_agents(self):
 
         agent_positions = []
         agent_goals = []
         agents_done = []
+        agents_path = []
 
 
         if self.obs_type == 'basic':
             pos = self.observation_space.sample()
 
             for a in range(self.num_agents):
-                agent_positions.append(pos[f'agent_{a}'])
-                agent_goals.append(pos[f'target_{a}'])
+                pos = pos[f'agent_{a}']
+                t_pos = pos[f'target_{a}']
+                agent_positions.append(pos)
+                agent_goals.append(t_pos)
                 agents_done.append(False)
+                
+                x = pos % self.n_cols
+                y = pos // self.n_cols
+                x_t = t_pos % self.n_cols
+                y_t = t_pos // self.n_cols
+
+                agents_path = self.maze.find_shortest_path(c_start = (x,y),
+                                                        c_end = (x_t,y_t))
+                num_sub_goals = len(agents_path)
         elif self.obs_type == 'rgb' or self.obs_type == 'spatial':
             pos_set = set()
 
@@ -248,10 +264,18 @@ class maze_env(gym.Env):
                 while t_pos in pos_set:
                     t_pos = self.agent_target_obs_space.sample()
                 agent_goals.append(t_pos)
+                x = pos % self.n_cols
+                y = pos // self.n_cols
+                x_t = t_pos % self.n_cols
+                y_t = t_pos // self.n_cols
+                agents_path.append(self.maze.find_shortest_path(c_start = (x,y),
+                                                        c_end = (x_t,y_t)))
+                
         
         self.agent_positions = agent_positions
         self.agent_goals = agent_goals
         self.agents_done = agents_done
+        self.agents_path = agents_path
     
     def manhattan_dist(self,point1, point2):
         x_1 = point1 % self.n_cols
@@ -542,12 +566,16 @@ class maze_env(gym.Env):
                                   'DOWN_LEFT_vision': vision['DOWN_LEFT'],
                                   'DOWN_RIGHT_vision': vision['DOWN_RIGHT'],
                                   'man_dist': goal_dist,
-                                  'done' : self.agents_done[a]}
+                                  'done' : self.agents_done[a],
+                                  'path' : self.agents_path[a]}
+
             if self.obs_type == 'rgb' or self.obs_type=='spatial':
                 info[f'agent_{a}']['pos'] = pos
                 info[f'agent_{a}']['target'] = t_pos
         info['timer']=self.timer
+        info['len_game'] = self.len_game
         info['n_agents'] = self.num_agents
+        
         return info
     
     def step(self,actions):
@@ -573,28 +601,29 @@ class maze_env(gym.Env):
 
             # move agent based on action, or don't move it if there is a wall
             if action == 0 and vision['UP'][0]!=1:
-                rewards +=0.1
+                rewards -=0.04
                 pos -= n_cols
             elif action == 1 and vision['DOWN'][0]!=1:
-                rewards +=0.1
+                rewards -=0.04
                 pos += n_cols
             elif action == 2 and vision['LEFT'][0]!=1:
-                rewards +=0.1
+                rewards -=0.04
                 pos -= 1
             elif action == 3 and vision['RIGHT'][0]!=1:
-                rewards +=0.1
+                rewards -=0.04
                 pos += 1
             else:
                 if action !=4:
-                    rewards -=1
-                rewards +=0.1
+                    rewards -=0.75
+                rewards -=0.1
 
             if self.agent_positions[i]==self.agent_goals[i] or self.agents_done[i]:
-                rewards +=self.len_game - self.timer + 10
+                #rewards +=self.len_game - self.timer 
+                rewards+=1
                 self.agents_done[i] = True
                 
             else:
-                rewards -=0.1
+                #rewards -=0.1
                 self.agent_positions[i] = pos
                 self.agents_done[i] = False
 

@@ -74,7 +74,7 @@ class Maze_Training:
         self.optimizer = torch.optim.Adam(self.agents.Q_fun.parameters(),lr=self.lr)
 
         # Schedular to lower the lr
-        self.scheduler = StepLR(self.optimizer,step_size=100,gamma=0.5)
+        self.scheduler = StepLR(self.optimizer,step_size=30,gamma=0.1)
 
         # results from training
         self.losses = []
@@ -127,6 +127,7 @@ class Maze_Training:
         reward_t = torch.tensor(np.array(reward),dtype=torch.float32,device = device.DEVICE)
         terminated_t = torch.tensor(np.array(terminated),dtype = torch.int64,device= device.DEVICE)
 
+
         return local_st,global_st,action_t,next_local_st,next_global_st,reward_t, terminated_t
 
     def compute_loss(self,batch_size, gamma=0.99,lambda_entropy = 0.01):
@@ -141,24 +142,35 @@ class Maze_Training:
         # Get the states and actions
         local_s,global_s, actions,next_local_s,next_global_s, rewards, terminated = self.sample_replay(batch_size)
         
-        # get our policy q-values 
+        # We need to find $Q^*(s,a) \approx r + \gamma * Q(s', max_{a'} Q'(s',a'))
+        # Where (s,a,r,s') is from the replay buffer, Q is the policy net, Q' is the target net
+
+
+        # get Q(s,a)
         q_values = self.agents.Q_fun(local_s,global_s)
         selected_q_values = q_values.gather(1,actions.unsqueeze(1)).squeeze(1)
-        #print('q_values',torch.isinf(q_values).any())
-        with torch.no_grad():
-            # Next, we calculate the the target q-values which are maximized
-            next_q_values = self.target_Q_net(next_local_s,next_global_s).max(1)[0]
 
+        with torch.no_grad():
+
+            next_actions = self.agents.Q_fun(next_local_s, next_global_s).argmax(1, keepdim=True)
+
+            # Next, we calculate the the target q-values which are maximized
+            next_q_values = self.target_Q_net(next_local_s,next_global_s).gather(1,next_actions).squeeze(1)
+            
             # Then we calculate the estimated Bellmann expectation operator
             target = rewards + gamma*next_q_values * (1-terminated.float())
 
         # Compute the loss between the Bellman expectation operator and the policy q-values
         loss = self.loss_fun(selected_q_values,target)
-
+        #print(f"Reward mean: {rewards.mean().item()}, std: {rewards.std().item()}")
+        #print(f"Q_target mean: {target.mean().item()}, std: {target.std().item()}")
+        #print(f"Q_policy mean: {selected_q_values.mean().item()}, std: {selected_q_values.std().item()}")
+        
         # Now, for the entropy, we want to look at $pi(a|s), the probablity of action a given state s
         # and compute its entropy over all the actions, and take the average over the states.
         action_probs = torch.softmax(q_values,dim=1)
         entropy = -torch.sum(action_probs * torch.log(action_probs + 1e-6),dim=1)
+        
         #print('entropy',torch.isinf(entropy).any())
         loss -=lambda_entropy * entropy.mean()
         #print('Loss',torch.isinf(loss).any())
@@ -180,6 +192,9 @@ class Maze_Training:
 
         # discount factor
         gamma = 0.99
+        
+        # soft update
+        tau = 0.01
 
         # This is used to change the maze enviroment to train in, so that the agent 
         # does not hyper learn one maze
@@ -252,7 +267,7 @@ class Maze_Training:
                 # iterations of the enviroment, enact a soft update of the target Q-net
                 if len(self.replay_buffer)>=10000 and update_target % self.update_factor ==0:
                     #self.target_Q_net.load_state_dict(self.agent.Q_fun.state_dict())
-                    self.soft_update(tau=0.01)
+                    self.soft_update(tau=tau)
 
                 update_target+=1
 
@@ -262,16 +277,20 @@ class Maze_Training:
                 if len(self.replay_buffer)>=10000 and update_target % 4 == 0:
 
                     self.optimizer.zero_grad()
-                    loss,action_prob = self.compute_loss(batch_size=64,lambda_entropy=lambda_entropy)
+                    loss,action_prob = self.compute_loss(batch_size=64,gamma=gamma,lambda_entropy=lambda_entropy)
                     self.losses.append(loss.detach().cpu().numpy())
                     loss.backward()
+
+                    #for param in self.agents.Q_fun.parameters():
+                    #    if param.grad is not None:
+                    #        print(param.grad.abs().mean())
 
                     # Implement gradient cutoffs
                     nn.utils.clip_grad_norm_(self.agents.Q_fun.parameters(),1)
 
                     self.optimizer.step()
                     self.scheduler.step()
-                    if update_target % 100 ==0:
+                    if update_target % 1000 ==0:
                         print(f'episode {ep} with loss {loss}')
                     #if update_target % 200 == 0:
                         #print(f'action|state distribution: {action_prob.mean(0)}')
