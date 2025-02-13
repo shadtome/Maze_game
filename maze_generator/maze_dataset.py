@@ -40,7 +40,7 @@ class Maze_dataset(Dataset):
         if self.maze_type == 'percolation':
             maze = LatticeMazeGenerators.gen_percolation(
                 grid_shape=shape,
-                p=0.4,
+                p=1,
                 lattice_dim = 2,
                 start_coord=None,
             )

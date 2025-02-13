@@ -71,7 +71,7 @@ class Maze_Training:
         self.loss_fun = nn.SmoothL1Loss()  # The Huber loss function, more stable to outliers
 
         # Optimizer
-        self.optimizer = torch.optim.Adam(self.agents.Q_fun.parameters(),lr=self.lr)
+        self.optimizer = torch.optim.Adam(self.agents.Q_fun.parameters(),lr=self.lr,amsgrad=True)
 
         # Schedular to lower the lr
         self.scheduler = StepLR(self.optimizer,step_size=30,gamma=0.1)
@@ -289,7 +289,7 @@ class Maze_Training:
                     nn.utils.clip_grad_norm_(self.agents.Q_fun.parameters(),1)
 
                     self.optimizer.step()
-                    self.scheduler.step()
+                    #self.scheduler.step()
                     if update_target % 1000 ==0:
                         print(f'episode {ep} with loss {loss}')
                     #if update_target % 200 == 0:
