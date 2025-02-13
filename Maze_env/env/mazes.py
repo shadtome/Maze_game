@@ -45,6 +45,7 @@ class maze_env(gym.Env):
         self.agent_goals = None
         self.agents_done = None
         self.agents_path = None
+        
 
         # Define observation and action spaces
         assert obs_type is None or obs_type in self.metadata['obs_type']

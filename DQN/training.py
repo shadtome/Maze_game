@@ -10,11 +10,25 @@ import matplotlib.pyplot as plt
 from torch.optim.lr_scheduler import StepLR
 import os
 import device
+import pandas as pd
+
+
+
+#################
+# ----- Fixed Hyperparameters ---------- #
+REPLAY_BUFFER_SIZE = 100000
+MAZE_UPDATE = 100
+POLICY_UPDATE = 4
+TARGET_UPDATE = 10000
+
+
 
 
 class Maze_Training:
-    def __init__(self,name,maze_dataset,len_game = 1000,n_agents=1,vision=1, action_type = 'full',
-                 lr=1e-3,start_epsilon=1,final_epsilon=0.1, n_episodes=100, update_factor=500):
+    def __init__(self,name,maze_dataset,len_game = 1000,
+                 n_agents=1,vision=1, action_type = 'full',
+                 gamma=0.99,tau = 0.01, batch_size=32, lambda_entropy = 0.01, 
+                 lr=1e-3,start_epsilon=1,final_epsilon=0.1,n_frames=50000):
         """Used to train a deep Q-network for agents exploring a maze.
 
         maze_dataset: a dataset of mazes that come from the maze_dataset package
@@ -32,12 +46,21 @@ class Maze_Training:
 
         update_factor: This how many times the target Will change this"""
 
+
+        # --- Dynamic Hyperparameters --- #
+        self.gamma = gamma 
+        self.tau = tau   
+        self.batch_size = batch_size 
+        self.lambda_entropy = lambda_entropy
+
+
         # The agent with the Q_function
         self.agents = agent.CNN_Maze_Agents(vision,action_type)
 
         # The target Q_net
         self.target_Q_net = self.agents.Q_fun.copy()
         self.target_Q_net = self.target_Q_net.to(device=device.DEVICE)
+        self.target_Q_net.eval()
 
         # Collection of mazes (can be single maze or multiple)
         self.mazes = maze_dataset
@@ -50,15 +73,15 @@ class Maze_Training:
         self.len_game = len_game
 
         # Replay buffer
-        self.replay_buffer = deque(maxlen=100000)
+        self.replay_buffer = deque(maxlen=REPLAY_BUFFER_SIZE)
 
         # file name for saving and loading
         self.name = name
 
         # Where to start and end the number of episodes
-        self.start_episodes = 0
-        self.n_episodes = n_episodes
+        self.n_frames = n_frames
 
+        # --- epsilon-greedy policy --- #
         self.epsilon = start_epsilon
         self.start_epsilon = start_epsilon
         self.final_epsilon = final_epsilon
@@ -67,20 +90,21 @@ class Maze_Training:
         self.lr = lr
 
         # Used for training
-        #self.loss_fun = nn.MSELoss()
-        self.loss_fun = nn.SmoothL1Loss()  # The Huber loss function, more stable to outliers
+        self.loss_fun = nn.MSELoss()
+        #self.loss_fun = nn.SmoothL1Loss()  # The Huber loss function, more stable to outliers
 
         # Optimizer
-        self.optimizer = torch.optim.Adam(self.agents.Q_fun.parameters(),lr=self.lr,amsgrad=True)
+        self.optimizer = torch.optim.Adam(self.agents.Q_fun.parameters(),lr=self.lr,amsgrad=False)
+        #self.optimizer = torch.optim.RMSprop(self.agents.Q_fun.parameters(),lr=lr)
 
         # Schedular to lower the lr
-        self.scheduler = StepLR(self.optimizer,step_size=30,gamma=0.1)
+        self.scheduler = StepLR(self.optimizer,step_size=10,gamma=0.1)
 
         # results from training
         self.losses = []
         self.cum_reward = {}
-        self.update_factor = update_factor
         self.actions_taken = []
+        self.Q_values = []
 
         for a in range(self.n_agents):
             self.cum_reward[f'agent_{a}'] = []
@@ -130,7 +154,7 @@ class Maze_Training:
 
         return local_st,global_st,action_t,next_local_st,next_global_st,reward_t, terminated_t
 
-    def compute_loss(self,batch_size, gamma=0.99,lambda_entropy = 0.01):
+    def compute_loss(self):
         """This is to compute the loss between the target Q-network and the policy Q-network.
         This also adds a entropy term.  The entropy terms wants to be maximized so that it is not
         determinisitic, i.e., staying in one spot forever.
@@ -140,7 +164,7 @@ class Maze_Training:
                         we want to maximize entropy."""
         
         # Get the states and actions
-        local_s,global_s, actions,next_local_s,next_global_s, rewards, terminated = self.sample_replay(batch_size)
+        local_s,global_s, actions,next_local_s,next_global_s, rewards, terminated = self.sample_replay(self.batch_size)
         
         # We need to find $Q^*(s,a) \approx r + \gamma * Q(s', max_{a'} Q'(s',a'))
         # Where (s,a,r,s') is from the replay buffer, Q is the policy net, Q' is the target net
@@ -158,7 +182,7 @@ class Maze_Training:
             next_q_values = self.target_Q_net(next_local_s,next_global_s).gather(1,next_actions).squeeze(1)
             
             # Then we calculate the estimated Bellmann expectation operator
-            target = rewards + gamma*next_q_values * (1-terminated.float())
+            target = rewards + self.gamma*next_q_values * (1-terminated.float())
 
         # Compute the loss between the Bellman expectation operator and the policy q-values
         loss = self.loss_fun(selected_q_values,target)
@@ -172,151 +196,140 @@ class Maze_Training:
         entropy = -torch.sum(action_probs * torch.log(action_probs + 1e-6),dim=1)
         
         #print('entropy',torch.isinf(entropy).any())
-        loss -=lambda_entropy * entropy.mean()
+        loss -=self.lambda_entropy * entropy.mean()
         #print('Loss',torch.isinf(loss).any())
         return loss, action_probs
     
-    def decay_epsilon(self,episode,n_episodes):
+    def decay_epsilon(self,frame):
         """ Used to decay the epsilon down for the greedy policy"""
         start_epsilon = self.start_epsilon
         final_epsilon = self.final_epsilon
        
         #self.epsilon = max(final_epsilon,start_epsilon + ((final_epsilon-start_epsilon)/n_episodes)*episode )
-        self.epsilon = max(final_epsilon,self.epsilon * (0.9995))
+        #self.epsilon = max(final_epsilon,self.epsilon * (0.9995))
+        # Linear decline of the epsilon decay
+        linear_decay = start_epsilon*((self.n_frames - frame)/self.n_frames) + final_epsilon*(frame/self.n_frames)
+        self.epsilon = max(final_epsilon,linear_decay)
 
-    def train(self,lambda_entropy = 0.01):
-        """The deep Q-network training for our maze runner"""
 
-        # set up some initial variables for training
-        n_episodes = self.n_episodes
+    def train(self):
+        """ Train the agents in maze runner"""
 
-        # discount factor
-        gamma = 0.99
-        
-        # soft update
-        tau = 0.01
-
-        # This is used to change the maze enviroment to train in, so that the agent 
-        # does not hyper learn one maze
-        n_epi_per_maze = 100
-       
-        # get a random initial maze
+        #--- initialize random maze --- #
         random_index = random.randint(0,len(self.mazes)-1)
         maze = self.mazes[random_index]
 
-        # set up our maze enviroment for spatial learning
+
+        # --- maze environment --- #
         env = gym.make('Maze_env/MazeRunner-v0',len_game= self.len_game,
                        num_agents=self.n_agents,vision_len=self.agents.vision
                         ,maze=maze, render_mode='rgb_array',obs_type = 'spatial',
                         action_type=self.agents.action_type)
         
-        # set up the statistics wrapper for the enviroment and the user wrappers
+        # --- environment wrappers --- #
         #env = gym.wrappers.RecordEpisodeStatistics(env,buffer_length=n_episodes)
         env = gym.wrappers.RecordEpisodeStatistics(env)
         env = self.agents.add_wrappers(env)
-        #env = gym.wrappers.NormalizeObservation(env)
-            
         
-        update_target = 0
-        for ep in range(self.start_episodes,n_episodes):
-            
-            if ep % n_epi_per_maze == 0:
+        frame = 0
+        ep = 0
+        while frame < self.n_frames:
+
+            # --- initalize another random maze --- #
+            if ep % MAZE_UPDATE == 0:
                 random_index = random.randint(0,len(self.mazes)-1)
                 maze = self.mazes[random_index]
 
+            # --- reset the environment --- #
             state,info = env.reset(options = {'new_maze': maze})
-            #print(f'episode {ep}')
+            
             done = False
 
+            # --- cumulitive episode reward --- #
             cum_reward = [0 for _ in range(self.n_agents)]
 
-
-            #self.target_Q_net.load_state_dict(self.agents.Q_fun.state_dict())
-
-            #for param in self.agents.Q_fun.parameters():
-                #if param.grad is not None:
-                    #print(param.grad)
-
-            
             while not done:
-                #######################
-                # Get the action corresponding to the state
+
+                # --- get action --- #
                 action = self.agents.get_action(env,self.n_agents,state,self.epsilon)
 
+                # --- save actions for results --- #
                 self.actions_taken.append(action)
 
-                #########################
-                # For each action, get the next state for each agent
+                
+                # --- get next state and rewards from this action --- #
                 next_state, reward, terminated, truncated, info = env.step(action)
-                ########################
-                # Put the states, actions and next states in to the replay buffer for training
+
+                # --- save each of the agents state, rewards, ect.. --- #
                 for a in range(self.n_agents):
                     self.replay_buffer.append([state[f'local_{a}'],state[f'global_{a}'],action[a],
-                                               next_state[f'local_{a}'],next_state[f'global_{a}'],
-                                               reward[a],terminated])
+                                            next_state[f'local_{a}'],next_state[f'global_{a}'],
+                                            reward[a],terminated])
+                    # --- accumulate rewards --- #
                     cum_reward[a] += reward[a]
 
+                # --- record agent's rewards --- #
+                for a in range(self.n_agents):
+                    self.cum_reward[f'agent_{a}'].append(cum_reward[a])
+
+                # -- next state --- #
                 state = next_state
 
-                # This gets if all the agents go to their finish line or passes the threshold
-                # of the length of the game
+                # --- processes if episode is done --- #
                 done = truncated or terminated
-                
-                #######################
-                # After the replay is big enough we have gone through enough 
-                # iterations of the enviroment, enact a soft update of the target Q-net
-                if len(self.replay_buffer)>=10000 and update_target % self.update_factor ==0:
-                    #self.target_Q_net.load_state_dict(self.agent.Q_fun.state_dict())
-                    self.soft_update(tau=tau)
-
-                update_target+=1
 
 
-                ########################
-                # Enact stochastic Gradient Descent 
-                if len(self.replay_buffer)>=10000 and update_target % 4 == 0:
+                # --- soft update of target Q-net --- #
+                if len(self.replay_buffer)>=int(REPLAY_BUFFER_SIZE/10) and frame % TARGET_UPDATE ==0:
+                    
+                    self.soft_update(tau=self.tau)
 
+                # --- update policy Q-net --- #
+                if len(self.replay_buffer)>=int(REPLAY_BUFFER_SIZE/10) and frame % POLICY_UPDATE == 0:
+                    # -- zero out gradients --- #
                     self.optimizer.zero_grad()
-                    loss,action_prob = self.compute_loss(batch_size=64,gamma=gamma,lambda_entropy=lambda_entropy)
+                    
+                    # --- compute loss --- #
+                    loss,action_prob = self.compute_loss()
+
+                    # --- save losses --- #
                     self.losses.append(loss.detach().cpu().numpy())
+
+                    # --- enact backpropogation --- #
                     loss.backward()
 
-                    #for param in self.agents.Q_fun.parameters():
-                    #    if param.grad is not None:
-                    #        print(param.grad.abs().mean())
-
-                    # Implement gradient cutoffs
+                    # --- cutoff gradients --- #
                     nn.utils.clip_grad_norm_(self.agents.Q_fun.parameters(),1)
 
+                    # --- step optimizer --- #
                     self.optimizer.step()
-                    #self.scheduler.step()
-                    if update_target % 1000 ==0:
-                        print(f'episode {ep} with loss {loss}')
-                    #if update_target % 200 == 0:
-                        #print(f'action|state distribution: {action_prob.mean(0)}')
-                        #print(f'action|state probablities: {action_prob[0]}\n {action_prob[-1]}')
-                        
-                    self.decay_epsilon(ep,n_episodes)
-            # Recoard the cumulative reward for the agents
-            for a in range(self.n_agents):
-                self.cum_reward[f'agent_{a}'].append(cum_reward[a])
-            #print(f'cumulative reward: {cum_reward}')
-            
-            
 
-            #checkpoint save:
-            #if ep %20==0:
-                #self.save_checkpoint(ep)
-        #self.dist_rewards(env.dist_rewards)
-        env.close()
+                    # --- schedular step --- #
+                    #self.scheduler.step()
+
+                    if frame % 10000 ==0:
+                        print(f'frame {frame} with loss {loss}')
+                
+
+                # --- decay the epsilon greedy policy --- #   
+                self.decay_epsilon(frame)
+
+                frame+=1
+
+            env.close() 
+            ep +=1    
+
                 
     def results(self):
         """ This is used to print the losses over the training, 
                 and the distribution of actions.  Important for 
                 seeing if the agents are focusing too much on a action"""
         fig, axe = plt.subplots(self.n_agents+1,2,figsize=(10,10))
+        window_size = 10
+        losses_series = pd.Series(self.losses)
+        moving_avg_losses = losses_series.rolling(window=window_size).mean()
         
-        axe[0][0].plot(self.losses)
+        axe[0][0].plot(moving_avg_losses)
         axe[0][0].set_xlabel('episode')
         axe[0][0].set_ylabel('loss')
         axe[0][0].set_title('losses')
@@ -326,8 +339,14 @@ class Maze_Training:
         axe[0][1].hist(actions_taken)
         axe[0][1].set_title('histogram of actions')
 
+
         for a in range(1,self.n_agents+1):
-            axe[a][0].plot(self.cum_reward[f'agent_{a-1}'])
+            # Lets find a moving average of the scores
+              # Adjust based on how much smoothing you want
+            scores_series = pd.Series(self.cum_reward[f'agent_{a-1}'])
+            moving_avg_reward = scores_series.rolling(window=window_size).mean()
+
+            axe[a][0].plot(moving_avg_reward)
             axe[a][0].set_xlabel('episode')
             axe[a][0].set_ylabel('cum awards')
             axe[a][0].set_title('cumulative awards across episodes')
