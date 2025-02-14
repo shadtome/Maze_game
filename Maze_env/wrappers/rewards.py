@@ -2,6 +2,10 @@ from gymnasium import Wrapper
 from collections import deque
 import numpy as np
 
+
+# --- Reward Hyperparameters --- #
+ALPHA = 0.9
+
 class maze_runner_rewards(Wrapper):
     def __init__(self,env,gamma = 0.99,epsilon = 1e-8,):
 
@@ -11,25 +15,7 @@ class maze_runner_rewards(Wrapper):
         self.agents_recent_loc = {}
         self.agents_past = {}
 
-        self.reward_mean = 0
-        self.reward_var = 1
-        self.reward_count = 0
-        self.reward_decay = 0.99
-        
-    def normalize_rewards(self,rewards):
-        """Normalize rewards using running statistics."""
-        # Update running mean and variance
-        batch_mean = np.mean(rewards)
-        batch_var = np.var(rewards)
-        
-        # Exponentially decay the moving average and variance
-        self.reward_mean = self.reward_decay * self.reward_mean + (1 - self.reward_decay) * batch_mean
-        self.reward_var = self.reward_decay * self.reward_var + (1 - self.reward_decay) * batch_var
-        self.reward_count += 1
-        
-        # Normalize rewards
-        normalized_rewards = (rewards - self.reward_mean) / (np.sqrt(self.reward_var) + 1e-8)  # Avoid division by zero
-        return normalized_rewards
+        self.cum_rewards = []
 
 
     def step(self,action):
@@ -44,29 +30,39 @@ class maze_runner_rewards(Wrapper):
             # Punish for going to the same place it has already visted
             if pos not in self.agents_past:
                 self.agents_past[f'agent_{k}'].add(pos)
+                reward[k] +=0.2
             else:
                 reward[k]-=0.25
 
-            reward[k] = np.clip(reward[k],-1,1)
+            # --- check neighborhoods for goals and other agents --- #
+            for d in ['UP', 'DOWN','LEFT','RIGHT','UP_LEFT','UP_RIGHT','DOWN_LEFT','DOWN_RIGHT']:
+                try:
+                    index = info[f'agent_{k}'][f'{d}_vision'].index(3)
+                except ValueError:
+                    index = -1
+                
+                if index!=-1:
+                    reward[k] += pow(ALPHA,index+1)
+                else:
+                    reward[k] -= 0.1
             
-
-
-
-            if len(set(self.agents_recent_loc[f'agent_{k}']))<3:
-                reward[k]-=0.2
-            else:
-                reward[k]+=0.1
+            #if len(set(self.agents_recent_loc[f'agent_{k}']))<3:
+            #    reward[k]-=0.2
+            #else:
+            #    reward[k]+=0.1
 
             #if self.agents_dist[f'agent_{k}'][0]>self.agents_dist[f'agent_{k}'][1]:
-            #    reward[k]+=1
+            #    reward[k]+=0.1
             #else:
-            #    reward[k]-=0.5
+            #    reward[k]-=0.1
 
             #if not info[f'agent_{k}']['done'] and truncated:
                 #reward[k] -=info['timer']
+            reward[k] = np.clip(reward[k],-1,1)
+
+            self.cum_rewards[k] += reward[k]
         
-        #reward = self.normalize_rewards(reward)
-        
+        truncated = truncated or all(reward <-info['max_pos'] for reward in self.cum_rewards)
 
         return new_obs, reward, terminated, truncated, info
     
@@ -77,7 +73,7 @@ class maze_runner_rewards(Wrapper):
             self.agents_dist[f'agent_{a}'] = deque([info[f'agent_{a}']['man_dist']],maxlen=2)
             self.agents_recent_loc[f'agent_{a}'] = deque([info[f'agent_{a}']['pos']],maxlen=3)
             self.agents_past[f'agent_{a}'] = {info[f'agent_{a}']['pos']}
-
+            self.cum_rewards.append(0)
         
 
         return obs, info

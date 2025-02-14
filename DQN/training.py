@@ -25,8 +25,9 @@ TARGET_UPDATE = 10000
 
 
 class Maze_Training:
-    def __init__(self,name,maze_dataset,len_game = 1000,
-                 n_agents=1,vision=1, action_type = 'full',
+    def __init__(self,name,maze_dataset,maze_agent,
+                 len_game = 1000,
+                 n_agents=1,
                  gamma=0.99,tau = 0.01, batch_size=32, lambda_entropy = 0.01, 
                  lr=1e-3,start_epsilon=1,final_epsilon=0.1,n_frames=50000):
         """Used to train a deep Q-network for agents exploring a maze.
@@ -55,7 +56,7 @@ class Maze_Training:
 
 
         # The agent with the Q_function
-        self.agents = agent.CNN_Maze_Agents(vision,action_type)
+        self.agents = maze_agent
 
         # The target Q_net
         self.target_Q_net = self.agents.Q_fun.copy()
@@ -80,6 +81,7 @@ class Maze_Training:
 
         # Where to start and end the number of episodes
         self.n_frames = n_frames
+        self.decay_stop = int(n_frames*0.10)
 
         # --- epsilon-greedy policy --- #
         self.epsilon = start_epsilon
@@ -90,15 +92,15 @@ class Maze_Training:
         self.lr = lr
 
         # Used for training
-        self.loss_fun = nn.MSELoss()
-        #self.loss_fun = nn.SmoothL1Loss()  # The Huber loss function, more stable to outliers
+        #self.loss_fun = nn.MSELoss()
+        self.loss_fun = nn.SmoothL1Loss()  # The Huber loss function, more stable to outliers
 
         # Optimizer
         self.optimizer = torch.optim.Adam(self.agents.Q_fun.parameters(),lr=self.lr,amsgrad=False)
         #self.optimizer = torch.optim.RMSprop(self.agents.Q_fun.parameters(),lr=lr)
 
         # Schedular to lower the lr
-        self.scheduler = StepLR(self.optimizer,step_size=10,gamma=0.1)
+        self.scheduler = StepLR(self.optimizer,step_size=12500,gamma=0.1)
 
         # results from training
         self.losses = []
@@ -117,6 +119,7 @@ class Maze_Training:
             tau: this is a number in [0,1], where tau=1 implies that we replace the target parameters
             with the policy parameters.  We use a small tau to make the policy slowly update the target."""
         
+        # --- calculate target = tau (policy) + (1-tau) target --- #
         for target_param, policy_param in zip(self.target_Q_net.parameters(),self.agents.Q_fun.parameters()):
             target_param.data.copy_(tau * policy_param.data + (1.0 - tau) * target_param.data)
 
@@ -163,41 +166,46 @@ class Maze_Training:
         lambda_entropy: this is the regularization term for the entropy loss, here 
                         we want to maximize entropy."""
         
-        # Get the states and actions
+        # --- get a sample of replays of past experiences --- #
         local_s,global_s, actions,next_local_s,next_global_s, rewards, terminated = self.sample_replay(self.batch_size)
         
         # We need to find $Q^*(s,a) \approx r + \gamma * Q(s', max_{a'} Q'(s',a'))
         # Where (s,a,r,s') is from the replay buffer, Q is the policy net, Q' is the target net
 
 
-        # get Q(s,a)
+        # --- get Q(s,a) for each action --- #
         q_values = self.agents.Q_fun(local_s,global_s)
+
+        # --- pick the Q values corresponding to the picked actions --- #
         selected_q_values = q_values.gather(1,actions.unsqueeze(1)).squeeze(1)
 
         with torch.no_grad():
+            # --- get next actions where Q(s',a) is maximized --- #
+            next_actions = self.agents.Q_fun(next_local_s, next_global_s).argmax(1, keepdim=True).detach()
 
-            next_actions = self.agents.Q_fun(next_local_s, next_global_s).argmax(1, keepdim=True)
-
-            # Next, we calculate the the target q-values which are maximized
+            # --- calculate Q'(s',a') where a' is the actions maximies from Q(s',a) above --- #
             next_q_values = self.target_Q_net(next_local_s,next_global_s).gather(1,next_actions).squeeze(1)
             
-            # Then we calculate the estimated Bellmann expectation operator
+            # --- calculate the estimator of the Bellmann equation --- #
             target = rewards + self.gamma*next_q_values * (1-terminated.float())
 
-        # Compute the loss between the Bellman expectation operator and the policy q-values
+        # --- compute the loss between Q(s,a) and the Bellmann equation --- #
         loss = self.loss_fun(selected_q_values,target)
-        #print(f"Reward mean: {rewards.mean().item()}, std: {rewards.std().item()}")
-        #print(f"Q_target mean: {target.mean().item()}, std: {target.std().item()}")
-        #print(f"Q_policy mean: {selected_q_values.mean().item()}, std: {selected_q_values.std().item()}")
         
-        # Now, for the entropy, we want to look at $pi(a|s), the probablity of action a given state s
-        # and compute its entropy over all the actions, and take the average over the states.
+        #print(f"Q(s,a) mean: {selected_q_values.mean().item()}, std: {selected_q_values.std().item()}")
+        #print(f"Target mean: {target.mean().item()}, std: {target.std().item()}")
+        #print(f"Reward mean: {rewards.mean().item()}, std: {rewards.std().item()}")
+        
+        
+        # --- Calculate the probabilities p(a|s) to compute entropy--- #
         action_probs = torch.softmax(q_values,dim=1)
+
+        # --- compute the entropy of the distribution p(-|s)  --- #
         entropy = -torch.sum(action_probs * torch.log(action_probs + 1e-6),dim=1)
         
-        #print('entropy',torch.isinf(entropy).any())
+        # --- we want to maximize entropy to make it less deterministic, so we take the negative --- #
         loss -=self.lambda_entropy * entropy.mean()
-        #print('Loss',torch.isinf(loss).any())
+        
         return loss, action_probs
     
     def decay_epsilon(self,frame):
@@ -208,11 +216,11 @@ class Maze_Training:
         #self.epsilon = max(final_epsilon,start_epsilon + ((final_epsilon-start_epsilon)/n_episodes)*episode )
         #self.epsilon = max(final_epsilon,self.epsilon * (0.9995))
         # Linear decline of the epsilon decay
-        linear_decay = start_epsilon*((self.n_frames - frame)/self.n_frames) + final_epsilon*(frame/self.n_frames)
+        linear_decay = start_epsilon*((self.decay_stop - frame)/self.decay_stop) + final_epsilon*(frame/self.decay_stop)
         self.epsilon = max(final_epsilon,linear_decay)
 
 
-    def train(self):
+    def train(self, init_pos = None):
         """ Train the agents in maze runner"""
 
         #--- initialize random maze --- #
@@ -224,7 +232,8 @@ class Maze_Training:
         env = gym.make('Maze_env/MazeRunner-v0',len_game= self.len_game,
                        num_agents=self.n_agents,vision_len=self.agents.vision
                         ,maze=maze, render_mode='rgb_array',obs_type = 'spatial',
-                        action_type=self.agents.action_type)
+                        action_type=self.agents.action_type,
+                        init_pos = init_pos)
         
         # --- environment wrappers --- #
         #env = gym.wrappers.RecordEpisodeStatistics(env,buffer_length=n_episodes)
@@ -305,7 +314,7 @@ class Maze_Training:
                     self.optimizer.step()
 
                     # --- schedular step --- #
-                    #self.scheduler.step()
+                    self.scheduler.step()
 
                     if frame % 10000 ==0:
                         print(f'frame {frame} with loss {loss}')
@@ -325,7 +334,7 @@ class Maze_Training:
                 and the distribution of actions.  Important for 
                 seeing if the agents are focusing too much on a action"""
         fig, axe = plt.subplots(self.n_agents+1,2,figsize=(10,10))
-        window_size = 10
+        window_size = int(self.n_frames*0.01)
         losses_series = pd.Series(self.losses)
         moving_avg_losses = losses_series.rolling(window=window_size).mean()
         

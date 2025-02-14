@@ -23,7 +23,8 @@ class maze_env(gym.Env):
                 'obs_type': ['rgb','spatial','basic'],
                 'action_type': ['full','cardinal']}
     def __init__(self, maze, len_game=1000,num_agents=1,vision_len = 1, 
-                 action_type = 'full',render_mode = None, obs_type=None):
+                 action_type = 'full',render_mode = None, obs_type=None,
+                 init_pos = None):
         super(maze_env, self).__init__()
 
         
@@ -31,7 +32,7 @@ class maze_env(gym.Env):
         self.window_size = 512 #512
 
         self.maze = maze
-
+        self.init_pos = init_pos
         
         
         self.n_cols = maze.grid_shape[1]
@@ -107,8 +108,8 @@ class maze_env(gym.Env):
 
     def new_maze(self,maze):
         self.__init__(maze,self.len_game,self.num_agents,
-                      self.vision_len,self.action_type,self.render_mode,self.obs_type)
-
+                      self.vision_len,self.action_type,self.render_mode,
+                      self.obs_type, init_pos=self.init_pos)
 
     def __global__(self,a):
         global_var = []
@@ -193,9 +194,7 @@ class maze_env(gym.Env):
             place_value(val, x+(i+1),y+(i+1),i+1,True)
         
             
-        return spatial
-
-        
+        return spatial      
 
     def __localRegion__(self):
         # first lets get our full rgb image and pad it out 
@@ -222,15 +221,14 @@ class maze_env(gym.Env):
                                    x-vision_ext - pix_square_size//2:x+vision_ext + pix_square_size//2]
             local.append(region.permute(1,2,0))
         return local
-    
-        
-        
+          
     def _init_agents(self):
 
         agent_positions = []
         agent_goals = []
         agents_done = []
         agents_path = []
+        cum_rewards = []
 
 
         if self.obs_type == 'basic':
@@ -250,33 +248,54 @@ class maze_env(gym.Env):
 
                 agents_path = self.maze.find_shortest_path(c_start = (x,y),
                                                         c_end = (x_t,y_t))
-                num_sub_goals = len(agents_path)
+            
         elif self.obs_type == 'rgb' or self.obs_type == 'spatial':
-            pos_set = set()
-
-            for a in range(self.num_agents):
-                pos = self.agent_target_obs_space.sample()
-                while pos in pos_set:
+            
+            if self.init_pos == None:
+            
+                pos_set = set()
+                for a in range(self.num_agents):
                     pos = self.agent_target_obs_space.sample()
-                pos_set.add(pos)
-                agent_positions.append(pos)
-                agents_done.append(False)
-                t_pos = self.agent_target_obs_space.sample()
-                while t_pos in pos_set:
+                    while pos in pos_set:
+                        pos = self.agent_target_obs_space.sample()
+                    pos_set.add(pos)
+                    agent_positions.append(pos)
+                    agents_done.append(False)
                     t_pos = self.agent_target_obs_space.sample()
-                agent_goals.append(t_pos)
-                x = pos % self.n_cols
-                y = pos // self.n_cols
-                x_t = t_pos % self.n_cols
-                y_t = t_pos // self.n_cols
-                agents_path.append(self.maze.find_shortest_path(c_start = (x,y),
-                                                        c_end = (x_t,y_t)))
+                    while t_pos in pos_set:
+                        t_pos = self.agent_target_obs_space.sample()
+                    agent_goals.append(t_pos)
+                    x = pos % self.n_cols
+                    y = pos // self.n_cols
+                    x_t = t_pos % self.n_cols
+                    y_t = t_pos // self.n_cols
+                    agents_path.append(self.maze.find_shortest_path(c_start = (x,y),
+                                                            c_end = (x_t,y_t)))
+            else:
+                agent_positions = self.init_pos['agents'].copy()
+                agent_goals = self.init_pos['targets'].copy()
+                
+                for a in range(self.num_agents):
+                    pos = agent_positions[a]
+                    t_pos = agent_goals[a]
+
+                    x = pos % self.n_cols
+                    y = pos // self.n_cols
+                    x_t = t_pos % self.n_cols
+                    y_t = t_pos // self.n_cols
+                    agents_path.append(self.maze.find_shortest_path(c_start = (x,y),
+                                                            c_end = (x_t,y_t)))
+                    
+                    
+                    
+                    agents_done.append(False)
                 
         
         self.agent_positions = agent_positions
         self.agent_goals = agent_goals
         self.agents_done = agents_done
         self.agents_path = agents_path
+        
     
     def manhattan_dist(self,point1, point2):
         x_1 = point1 % self.n_cols
@@ -319,7 +338,6 @@ class maze_env(gym.Env):
         agent_positions = self.agent_positions.copy()
         
         pos = agent_positions[a]
-        pos = pos.copy()
         
         # agents that are not done
         agents_not_done = np.where(np.array(self.agents_done) == False)[0]
@@ -530,7 +548,6 @@ class maze_env(gym.Env):
             
             return state, info
         
-
     def _get_state(self):
 
         if self.obs_type == 'basic':
@@ -549,8 +566,7 @@ class maze_env(gym.Env):
                 state[f'global_{a}'] = self.__global__(a)
                 
             return state
-
-    
+ 
     def _get_info(self):
         info = {}
         for a in range(self.num_agents):
@@ -576,6 +592,7 @@ class maze_env(gym.Env):
         info['timer']=self.timer
         info['len_game'] = self.len_game
         info['n_agents'] = self.num_agents
+        info['max_pos'] = self.n_cols*(self.n_rows) - 1
         
         return info
     
@@ -587,20 +604,23 @@ class maze_env(gym.Env):
         # going right: pos + 1
         # going left: pos - 1
 
+        # --- get number of columns and rows --- #
         n_cols = self.n_cols
         n_rows = self.n_rows
 
         agent_rewards = []
 
-        # Timer for the environment
+        # --- timer for how long the environment is going --- #
         self.timer+=1
         
+        # --- go through each agent's action and process it --- #
         for i, action in enumerate(actions):
+
             rewards = 0
             pos = self.agent_positions[i]
             vision = self._get_vision(i)
 
-            # move agent based on action, or don't move it if there is a wall
+            # --- move the agent is the corresponding direction if there is not wall --- #
             if action == 0 and vision['UP'][0]!=1:
                 rewards -=0.04
                 pos -= n_cols
@@ -615,9 +635,11 @@ class maze_env(gym.Env):
                 pos += 1
             else:
                 if action !=4:
+                    # --- penalize for going against the wall --- #
                     rewards -=0.75
                 rewards -=0.1
 
+            # --- reward a lot surviving to the goal --- #
             if self.agent_positions[i]==self.agent_goals[i] or self.agents_done[i]:
                 #rewards +=self.len_game - self.timer 
                 rewards+=1
@@ -632,8 +654,11 @@ class maze_env(gym.Env):
 
             agent_rewards.append(rewards)
 
+        # --- check if all agents are done --- #
         done = all(self.agents_done)
 
+
+        # --- check if end of the time --- #
         truncated = self.timer == self.len_game
 
         if self.render_mode == 'human' and self.obs_type!='rgb':
@@ -717,29 +742,29 @@ class maze_env(gym.Env):
             np.array(pygame.surfarray.pixels3d(screen)),axes = (1,0,2)
         )
 
-
-
     def _draw_maze(self,screen, square_size):
+        # --- get connection list for the maze --- #
+        # --- down connection: true if go down, right connection: true if go right --- #
         down_con = self.maze.connection_list[0]
         right_con = self.maze.connection_list[1]
         rows = self.n_rows
         cols = self.n_cols
+        # --- go through each of the rows and columns to see if there is a wall and draw it --- #
         for row in range(rows):
             for col in range(cols):
 
                 x = col * square_size
                 y = row * square_size
 
-                #pygame.draw.rect(screen,(255,255,255),(x,y,square_size,square_size),0)
-                #pygame.draw.rect(screen, (0,0,0),(x,y,square_size,square_size),1)
-
+                # --- draw line for column --- #
                 if col < cols - 1 and not right_con[row][col]:
                     pygame.draw.line(screen, (0,0,0), (x + square_size, y),
                                       (x + square_size, y + square_size),5)
-
+                # --- draw line for row --- #
                 if row < rows - 1 and not down_con[row][col]:
                     pygame.draw.line(screen, color=(0,0,0), start_pos=(x, y+square_size),
                                      end_pos=(x+square_size,y+square_size),width=5)
+    
     def close(self):
         if self.window is not None:
             pygame.display.quit()
