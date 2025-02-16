@@ -4,6 +4,7 @@ import torch.nn as nn
 import torchvision.models as models
 import Maze_env
 
+
 class CNN_Basic(nn.Module):
     def __init__(self,state_shape,n_actions):
         """THe Convolutional Neural network
@@ -16,7 +17,7 @@ class CNN_Basic(nn.Module):
         h = state_shape[1]
         w = state_shape[2]
 
-
+        self.name = 'CNN_Basic'
        
         self.CNN_function= nn.Sequential(
             nn.Conv2d(in_channels=3,out_channels=12,kernel_size=3,stride=2),
@@ -36,7 +37,7 @@ class CNN_Basic(nn.Module):
     
     
     def copy(self):
-        q_copy = CNN_version1(self.state_shape,self.n_actions)
+        q_copy = CNN_Basic(self.state_shape,self.n_actions)
         q_copy.load_state_dict(self.state_dict())
         return q_copy
     
@@ -52,6 +53,7 @@ class basic_NN(nn.Module):
         h = state_shape[1]
         w = state_shape[2]
         input = h*w*3
+        self.name = 'basic_NN'
         
         self.functions = nn.Sequential(
             nn.Flatten(),
@@ -80,6 +82,8 @@ class CNN_version1(nn.Module):
         self.n_actions = n_actions # number of actions
         h = state_shape[1]
         w = state_shape[2]
+
+        self.name = 'CNN_version1'
 
 
        
@@ -121,3 +125,10 @@ class CNN_version1(nn.Module):
         q_copy = CNN_version1(self.state_shape,self.n_actions)
         q_copy.load_state_dict(self.state_dict())
         return q_copy
+    
+
+metadata = {
+    'CNN_Basic' : CNN_Basic,
+    'basic_NN': basic_NN,
+    'CNN_version1': CNN_version1
+}

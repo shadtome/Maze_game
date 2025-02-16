@@ -11,16 +11,15 @@ from torch.optim.lr_scheduler import StepLR
 import os
 import device
 import pandas as pd
+import json
+import seaborn as sns
+import DQN.buffers as buffers
 
 
 
 #################
 # ----- Fixed Hyperparameters ---------- #
-REPLAY_BUFFER_SIZE = 100000
 MAZE_UPDATE = 100
-POLICY_UPDATE = 4
-TARGET_UPDATE = 10000
-
 
 
 
@@ -28,8 +27,12 @@ class Maze_Training:
     def __init__(self,name,maze_dataset,maze_agent,
                  len_game = 1000,
                  n_agents=1,
+                 replay_buffer_size = 100000,
+                 policy_update = 4,
+                 target_update = 1000,
                  gamma=0.99,tau = 0.01, batch_size=32, lambda_entropy = 0.01, 
-                 lr=1e-3,start_epsilon=1,final_epsilon=0.1,n_frames=50000):
+                 lr=1e-3,start_epsilon=1,final_epsilon=0.1,n_frames=50000,
+                 beta = 0.1, alpha = 0.6):
         """Used to train a deep Q-network for agents exploring a maze.
 
         maze_dataset: a dataset of mazes that come from the maze_dataset package
@@ -54,6 +57,10 @@ class Maze_Training:
         self.batch_size = batch_size 
         self.lambda_entropy = lambda_entropy
 
+        self.replay_buffer_size = replay_buffer_size
+        self.policy_update = policy_update
+        self.target_update = target_update
+
 
         # The agent with the Q_function
         self.agents = maze_agent
@@ -74,14 +81,15 @@ class Maze_Training:
         self.len_game = len_game
 
         # Replay buffer
-        self.replay_buffer = deque(maxlen=REPLAY_BUFFER_SIZE)
+        #self.replay_buffer = deque(maxlen=self.replay_buffer_size)
+        self.replay_buffer = buffers.PERBuffer(capacity=self.replay_buffer_size,alpha=alpha)
 
         # file name for saving and loading
         self.name = name
 
         # Where to start and end the number of episodes
         self.n_frames = n_frames
-        self.decay_stop = int(n_frames*0.10)
+        self.decay_stop = int(n_frames*beta)
 
         # --- epsilon-greedy policy --- #
         self.epsilon = start_epsilon
@@ -96,20 +104,27 @@ class Maze_Training:
         self.loss_fun = nn.SmoothL1Loss()  # The Huber loss function, more stable to outliers
 
         # Optimizer
+        #self.optimizer = torch.optim.SGD(self.agents.Q_fun.parameters(),lr=self.lr)
         self.optimizer = torch.optim.Adam(self.agents.Q_fun.parameters(),lr=self.lr,amsgrad=False)
         #self.optimizer = torch.optim.RMSprop(self.agents.Q_fun.parameters(),lr=lr)
 
         # Schedular to lower the lr
-        self.scheduler = StepLR(self.optimizer,step_size=12500,gamma=0.1)
+        self.scheduler = StepLR(self.optimizer,step_size=n_frames*0.01,gamma=0.1)
 
         # results from training
         self.losses = []
         self.cum_reward = {}
         self.actions_taken = []
-        self.Q_values = []
+        self.Q_values = {}
+        self.td_errors = {}
+        for a in range(self.agents.n_actions):
+            self.Q_values[a] = []
+            
 
         for a in range(self.n_agents):
             self.cum_reward[f'agent_{a}'] = []
+            self.td_errors[a] = []
+        
 
 
     def soft_update(self,tau):
@@ -123,39 +138,72 @@ class Maze_Training:
         for target_param, policy_param in zip(self.target_Q_net.parameters(),self.agents.Q_fun.parameters()):
             target_param.data.copy_(tau * policy_param.data + (1.0 - tau) * target_param.data)
 
+    def transform(self,local_s,global_s,action,next_local_s,next_global_s,reward,terminated,single=False):
+
+        # we need everything to be a tensor to put into our neural network,
+        # furthermore, we will need to permute our shape, since gymnasium outputs images
+        # as (h,w,c)
+        local_st = torch.tensor(np.array(local_s),dtype=torch.float32,device = device.DEVICE)
+        if single:
+            local_st = local_st.unsqueeze(0)
+        local_st = local_st.permute((0,3,1,2))
+        local_st = local_st/255
+
+        global_st = torch.tensor(np.array(global_s),dtype=torch.float32,device = device.DEVICE)
+        
+        if single:
+            global_st = global_st.unsqueeze(0)
+        
+        global_st[:,0:2] = global_st[:,0:2]/(self.agents.CNN_shape[1]*self.agents.CNN_shape[2]-1)
+        global_st[:,3] = global_st[:,3]/(self.agents.CNN_shape[1] + self.agents.CNN_shape[2])
+
+        if single:
+            action_t = torch.tensor(np.array([action]), dtype=torch.int64,device = device.DEVICE)
+        else:
+            action_t = torch.tensor(np.array(action), dtype=torch.int64,device = device.DEVICE)
+
+        next_local_st = torch.tensor(np.array(next_local_s),dtype=torch.float32,device=device.DEVICE)
+        if single:
+            next_local_st = next_local_st.unsqueeze(0)
+        next_local_st = next_local_st.permute((0,3,1,2))
+
+        next_global_st = torch.tensor(np.array(next_global_s),dtype=torch.float32,device = device.DEVICE)
+        if single:
+            next_global_st = next_global_st.unsqueeze(0)
+
+
+        
+        if single:
+            reward_t = torch.tensor(np.array([reward]),dtype=torch.float32,device = device.DEVICE)
+            reward_t = reward_t.unsqueeze(0)
+            terminated_t = torch.tensor(np.array([terminated]),dtype = torch.int64,device= device.DEVICE)
+            terminated_t = terminated_t.unsqueeze(0)
+        else:
+            reward_t = torch.tensor(np.array(reward),dtype=torch.float32,device = device.DEVICE)
+            terminated_t = torch.tensor(np.array(terminated),dtype = torch.int64,device= device.DEVICE)
+
+
+        return local_st,global_st,action_t,next_local_st,next_global_st,reward_t, terminated_t
+
+
     def sample_replay(self, batch_size):
         """ Used to sample a collection of experiences fro the replay buffer that the agents have done:
         i.e., it is filled with initial state, action take, then the resulting state with corresponding reward"""
 
         # sample from the buffer
-        sample = random.sample(self.replay_buffer,batch_size)
-        # get the information
-        local_state,global_state, action, next_local_state, next_global_state, reward,terminated = zip(*sample)
-
-        # we need everything to be a tensor to put into our neural network,
-        # furthermore, we will need to permute our shape, since gymnasium outputs images
-        # as (h,w,c)
-        local_st = torch.tensor(np.array(local_state),dtype=torch.float32,device = device.DEVICE)
-        local_st = local_st.permute((0,3,1,2))
-        local_st = local_st/255
-
-        global_st = torch.tensor(np.array(global_state),dtype=torch.float32,device = device.DEVICE)
+        #sample = random.sample(self.replay_buffer,batch_size)
+        ###########################################
+        batch = self.replay_buffer.sample(batch_size)
         
-        global_st[:,0:2] = global_st[:,0:2]/(self.agents.CNN_shape[1]*self.agents.CNN_shape[2]-1)
-        global_st[:,3] = global_st[:,3]/(self.agents.CNN_shape[1] + self.agents.CNN_shape[2])
+        sample = [exp for _, exp ,_ in batch]
+        if type(sample) == int:
+            print(sample)
+        ###########################################
+        # get the information
 
-        action_t = torch.tensor(np.array(action), dtype=torch.int64,device = device.DEVICE)
-
-        next_local_st = torch.tensor(np.array(next_local_state),dtype=torch.float32,device=device.DEVICE)
-        next_local_st = next_local_st.permute((0,3,1,2))
-
-        next_global_st = torch.tensor(np.array(next_global_state),dtype=torch.float32,device = device.DEVICE)
-
-        reward_t = torch.tensor(np.array(reward),dtype=torch.float32,device = device.DEVICE)
-        terminated_t = torch.tensor(np.array(terminated),dtype = torch.int64,device= device.DEVICE)
-
-
-        return local_st,global_st,action_t,next_local_st,next_global_st,reward_t, terminated_t
+        local_state,global_state, action, next_local_state, next_global_state, reward,terminated = zip(*sample)
+        
+        return self.transform(local_state,global_state, action, next_local_state, next_global_state, reward,terminated)
 
     def compute_loss(self):
         """This is to compute the loss between the target Q-network and the policy Q-network.
@@ -176,8 +224,13 @@ class Maze_Training:
         # --- get Q(s,a) for each action --- #
         q_values = self.agents.Q_fun(local_s,global_s)
 
+        avg_q_values = q_values.mean(dim=0).tolist()
+        for a in range(self.agents.n_actions):
+            self.Q_values[a].append(avg_q_values[a])
+        
         # --- pick the Q values corresponding to the picked actions --- #
         selected_q_values = q_values.gather(1,actions.unsqueeze(1)).squeeze(1)
+        
 
         with torch.no_grad():
             # --- get next actions where Q(s',a) is maximized --- #
@@ -192,10 +245,6 @@ class Maze_Training:
         # --- compute the loss between Q(s,a) and the Bellmann equation --- #
         loss = self.loss_fun(selected_q_values,target)
         
-        #print(f"Q(s,a) mean: {selected_q_values.mean().item()}, std: {selected_q_values.std().item()}")
-        #print(f"Target mean: {target.mean().item()}, std: {target.std().item()}")
-        #print(f"Reward mean: {rewards.mean().item()}, std: {rewards.std().item()}")
-        
         
         # --- Calculate the probabilities p(a|s) to compute entropy--- #
         action_probs = torch.softmax(q_values,dim=1)
@@ -207,6 +256,41 @@ class Maze_Training:
         loss -=self.lambda_entropy * entropy.mean()
         
         return loss, action_probs
+    
+    def td_error(self,local_s,global_s,action,n_local_s,n_global_s,reward,terminated):
+        """Compute the td-error:
+            r + gamma*Q'(s',argmax_{a'}Q(s'a')) - Q(s,a)"""
+        local_s,global_s,action,n_local_s,n_global_s,reward,terminated = self.transform(local_s,global_s,action,n_local_s,n_global_s,reward,terminated,single=True)
+
+        # --- get Q(s,a) for each action --- #
+        q_values = self.agents.Q_fun(local_s,global_s)
+
+
+        # --- pick the Q values corresponding to the picked actions --- #
+        selected_q_values = q_values.gather(1,action.unsqueeze(1)).squeeze(1)
+
+        with torch.no_grad():
+            # --- get next actions where Q(s',a) is maximized --- #
+            next_actions = self.agents.Q_fun(n_local_s, n_global_s).argmax(1, keepdim=True).detach()
+
+            # --- calculate Q'(s',a') where a' is the actions maximies from Q(s',a) above --- #
+            next_q_values = self.target_Q_net(n_local_s,n_global_s).gather(1,next_actions).squeeze(1)
+            
+            # --- calculate the estimator of the Bellmann equation --- #
+            target = reward + self.gamma*next_q_values * (1-terminated.float())
+
+        td_e = target - selected_q_values
+        
+        return td_e.detach().cpu().numpy()
+    
+    def append_to_RB(self,local_s,global_s,action,n_local_s,n_global_s,reward,terminated,agent_id):
+        """Transform the inputs"""
+        td_e = self.td_error(local_s,global_s,action,n_local_s,n_global_s,reward,terminated)
+
+        self.replay_buffer.add((local_s,global_s,action,n_local_s,n_global_s,reward,terminated),td_e)
+        self.td_errors[agent_id].append(td_e)
+
+
     
     def decay_epsilon(self,frame):
         """ Used to decay the epsilon down for the greedy policy"""
@@ -271,9 +355,15 @@ class Maze_Training:
 
                 # --- save each of the agents state, rewards, ect.. --- #
                 for a in range(self.n_agents):
-                    self.replay_buffer.append([state[f'local_{a}'],state[f'global_{a}'],action[a],
+
+                    #self.replay_buffer.append([state[f'local_{a}'],state[f'global_{a}'],action[a],
+                    #                        next_state[f'local_{a}'],next_state[f'global_{a}'],
+                    #                        reward[a],terminated])
+                    ###################################
+                    self.append_to_RB(state[f'local_{a}'],state[f'global_{a}'],action[a],
                                             next_state[f'local_{a}'],next_state[f'global_{a}'],
-                                            reward[a],terminated])
+                                            reward[a],terminated,a)
+                    ###################################
                     # --- accumulate rewards --- #
                     cum_reward[a] += reward[a]
 
@@ -281,20 +371,24 @@ class Maze_Training:
                 for a in range(self.n_agents):
                     self.cum_reward[f'agent_{a}'].append(cum_reward[a])
 
+
                 # -- next state --- #
                 state = next_state
+
+                
+                
 
                 # --- processes if episode is done --- #
                 done = truncated or terminated
 
 
                 # --- soft update of target Q-net --- #
-                if len(self.replay_buffer)>=int(REPLAY_BUFFER_SIZE/10) and frame % TARGET_UPDATE ==0:
+                if len(self.replay_buffer)>=int(self.replay_buffer_size/10) and frame % self.target_update ==0:
                     
                     self.soft_update(tau=self.tau)
 
                 # --- update policy Q-net --- #
-                if len(self.replay_buffer)>=int(REPLAY_BUFFER_SIZE/10) and frame % POLICY_UPDATE == 0:
+                if len(self.replay_buffer)>=int(self.replay_buffer_size/10) and frame % self.policy_update == 0:
                     # -- zero out gradients --- #
                     self.optimizer.zero_grad()
                     
@@ -333,13 +427,13 @@ class Maze_Training:
         """ This is used to print the losses over the training, 
                 and the distribution of actions.  Important for 
                 seeing if the agents are focusing too much on a action"""
-        fig, axe = plt.subplots(self.n_agents+1,2,figsize=(10,10))
+        fig, axe = plt.subplots(self.n_agents+2,2,figsize=(10,10))
         window_size = int(self.n_frames*0.01)
         losses_series = pd.Series(self.losses)
         moving_avg_losses = losses_series.rolling(window=window_size).mean()
         
         axe[0][0].plot(moving_avg_losses)
-        axe[0][0].set_xlabel('episode')
+        axe[0][0].set_xlabel('frame')
         axe[0][0].set_ylabel('loss')
         axe[0][0].set_title('losses')
 
@@ -348,17 +442,48 @@ class Maze_Training:
         axe[0][1].hist(actions_taken)
         axe[0][1].set_title('histogram of actions')
 
+        # --- Q-values --- #
+        moving_avg_q = {}
+        for a in range(self.agents.n_actions):
+            action_series = pd.Series(self.Q_values[a])
+            moving_avg_action_temp = action_series.rolling(window_size).mean()
+            moving_avg_q[a] = moving_avg_action_temp
 
-        for a in range(1,self.n_agents+1):
+        data = []
+        for action, q_vals in moving_avg_q.items():
+            for frame, q in enumerate(q_vals):
+                data.append({"frame": frame, "Q-Value": q, "Action": action})
+
+        df = pd.DataFrame(data)
+
+        # Plot using Seaborn
+        sns.lineplot(data=df, x="frame", y="Q-Value", hue="Action", ax=axe[1][0], palette="tab10")
+
+
+        # --- boxplot of Q-values --- #
+        sns.violinplot(data=df, x="Action", y="Q-Value",  ax = axe[1][1])
+
+
+        for a in range(2,self.n_agents+2):
             # Lets find a moving average of the scores
               # Adjust based on how much smoothing you want
-            scores_series = pd.Series(self.cum_reward[f'agent_{a-1}'])
+            scores_series = pd.Series(self.cum_reward[f'agent_{a-2}'])
             moving_avg_reward = scores_series.rolling(window=window_size).mean()
 
             axe[a][0].plot(moving_avg_reward)
-            axe[a][0].set_xlabel('episode')
+            axe[a][0].set_xlabel('frame')
             axe[a][0].set_ylabel('cum awards')
             axe[a][0].set_title('cumulative awards across episodes')
+
+            td_series = pd.Series(self.td_errors[a-2])
+            moving_avg_td = td_series.rolling(window=window_size).mean()
+
+            axe[a][1].plot(moving_avg_td)
+            axe[a][1].set_xlabel('frame')
+            axe[a][1].set_ylabel('td error')
+            axe[a][1].set_title('error between target and policy')
+
+
 
         fd = os.getcwd()
         fd = os.path.join(fd,'trained_agents')
@@ -371,6 +496,7 @@ class Maze_Training:
             os.mkdir(fd)
         
         plt.savefig(os.path.join(fd,'results.png'))
+
 
     def dist_rewards(self,dist):
         """ Output the distribution of rewards, need the rewards wrapper to work"""
@@ -401,6 +527,10 @@ class Maze_Training:
 
     def save(self):
         """Save the model"""
+        # --- first save agent model --- #
+        self.agents.save(self.name)
+
+        # --- next save the hyperparameters --- #
         fd = os.getcwd()
         fd = os.path.join(fd,'trained_agents')
 
@@ -411,7 +541,24 @@ class Maze_Training:
         if os.path.exists(fd)==False:
             os.mkdir(fd)
 
-        torch.save(self.agents.Q_fun.state_dict(),os.path.join(fd,'agent.pth'))
+        # now to save the hyperparameters for this mod
+        param = {
+            'len_game': self.len_game,
+            'n_agents': self.n_agents,
+            'replay_buffer_size': self.replay_buffer_size,
+            'policy_update': self.policy_update,
+            'target_update': self.target_update,
+            'gamma': self.gamma,
+            'tau' : self.tau,
+            'batch_size': self.batch_size,
+            'lambda_entropy': self.lambda_entropy,
+            'lr': self.lr,
+            'n_frames': self.n_frames
+        }
+
+        with open(os.path.join(fd,'hyperparameters.json'),'w') as f:
+            json.dump(param,f,indent=4)
+
         
 
     def load(self):

@@ -10,3 +10,7 @@ def set_device(type_device = 'cpu'):
     GPU."""
     global DEVICE 
     DEVICE =  torch.device(type_device)
+
+
+
+RANDOM_STATE = 49

@@ -300,7 +300,7 @@ class maze_env(gym.Env):
     def manhattan_dist(self,point1, point2):
         x_1 = point1 % self.n_cols
         x_2 = point2 % self.n_cols
-        y_1 = point2// self.n_cols
+        y_1 = point1// self.n_cols
         y_2 = point2//self.n_cols
         return abs(x_1 - x_2) + abs(y_1 - y_2)
     
@@ -622,26 +622,32 @@ class maze_env(gym.Env):
 
             # --- move the agent is the corresponding direction if there is not wall --- #
             if action == 0 and vision['UP'][0]!=1:
+                
                 rewards -=0.04
                 pos -= n_cols
             elif action == 1 and vision['DOWN'][0]!=1:
+                
                 rewards -=0.04
                 pos += n_cols
             elif action == 2 and vision['LEFT'][0]!=1:
+                
                 rewards -=0.04
                 pos -= 1
             elif action == 3 and vision['RIGHT'][0]!=1:
+                
                 rewards -=0.04
                 pos += 1
             else:
                 if action !=4:
                     # --- penalize for going against the wall --- #
+                    
                     rewards -=0.75
                 rewards -=0.1
 
             # --- reward a lot surviving to the goal --- #
             if self.agent_positions[i]==self.agent_goals[i] or self.agents_done[i]:
                 #rewards +=self.len_game - self.timer 
+                
                 rewards+=1
                 self.agents_done[i] = True
                 

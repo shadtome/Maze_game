@@ -9,65 +9,16 @@ import Maze_env.wrappers.rewards as rw
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 from IPython.display import HTML,display
+import DQN.models as models
+import json
 import Maze_env
 
-class CNN_Q_fun(nn.Module):
-    def __init__(self,state_shape,n_actions):
-        """THe Convolutional Neural network
-            State_shape: The state shape will be of the form (3,h,w) where h is the height and
-                        w the width of the image.  The images are neighborhood observations of the agent
-            n_actions: the number of actions the agent can take: traditional will be 5"""
-        super().__init__()
-        self.state_shape = state_shape # Shape of the images for the local information
-        self.n_actions = n_actions # number of actions
-        h = state_shape[1]
-        w = state_shape[2]
 
-
-       
-        self.CNN_function= nn.Sequential(
-            nn.Conv2d(in_channels=3,out_channels=32,kernel_size=3,stride=2),
-            nn.ReLU(),
-            nn.Conv2d(in_channels=32,out_channels=64,kernel_size=2,stride=1),
-            nn.ReLU(),
-            nn.Flatten(),
-            nn.Linear(64*int((h-3)/2)*int((w-3)/2),32),
-            nn.ReLU(),
-        )
-        # Takes inputs of the form (pos,g_pos,done,dist)
-        self.global_function = nn.Sequential(
-            nn.Linear(4,32),
-            nn.ReLU(),
-            nn.Linear(32,12),
-            nn.ReLU(),
-        )
-
-        self.final_function =nn.Sequential(
-            nn.Linear(32 + 4,32),
-            nn.ReLU(),
-            nn.Linear(32,12),
-            nn.ReLU(),
-            nn.Linear(12,self.n_actions)
-        ) 
-
-    def forward(self,x,y):
-        
-        x = self.CNN_function(x)
-        
-        combined = torch.cat((x,y),dim=-1)
-        result = self.final_function(combined)
-        return result
-    
-    
-    def copy(self):
-        q_copy = CNN_Q_fun(self.state_shape,self.n_actions)
-        q_copy.load_state_dict(self.state_dict())
-        return q_copy
     
 
 
 class maze_agents:
-    def __init__(self,maze_model,vision,action_type = 'full'):
+    def __init__(self,maze_model,vision,action_type = 'full', **kwargs):
         """Initalize the base agent class, put the vision length to give the agents"""
 
         ################
@@ -90,9 +41,12 @@ class maze_agents:
         #self.Q_fun = basic_NN(self.CNN_shape,self.n_actions)
         self.Q_fun.to(device.DEVICE)
 
-        ######################
-        # Used to randomly initalizze the weights
-        self.Q_fun.apply(self.weights_init)
+        if 'load' in kwargs.keys():
+            self.Q_fun.load_state_dict(kwargs['load'])
+        else:
+            ######################
+            # Used to randomly initalizze the weights
+            self.Q_fun.apply(self.weights_init)
 
 
         #for layer in self.Q_fun.Q_function:
@@ -106,6 +60,22 @@ class maze_agents:
         ##################
         # Animation and replay purposes
         self.__last_replay_agents_perspective__ = None
+
+    @classmethod
+    def load(cls,name):
+        """Load the agents model"""
+        fd = os.getcwd()
+        fd = os.path.join(fd,'trained_agents')
+        fd = os.path.join(fd,f'{name}')
+
+        # -- load model hyperparameters -- #
+        with open(os.path.join(fd,'model_hyperparameters.json'),'r') as f:
+            loaded_model_hp =json.load(f)
+        name = loaded_model_hp['name']
+        vision = loaded_model_hp['vision']
+        action_type = loaded_model_hp['action_type']
+        param_load = torch.load(os.path.join(fd, f'agent.pth'))
+        return cls(models.metadata[name],vision,action_type,load = param_load)
 
     def transform_local_to_nn(self,local_state):
         """Used to transform information in enviroment numpy to Q-network pytorch,
@@ -252,12 +222,14 @@ class maze_agents:
         
         torch.save(self.Q_fun.state_dict(),os.path.join(fd,f'agent.pth'))
 
-    def load(self,name):
-        """Load the agents model"""
-        fd = os.getcwd()
-        fd = os.path.join(fd,'trained_agents')
-        fd = os.path.join(fd,f'{name}')
-        self.Q_fun.load_state_dict(torch.load(os.path.join(fd, f'agent.pth')))
+        model_param = {
+            'name': self.Q_fun.name,
+            'vision': self.vision,
+            'action_type': self.action_type
+        }
+
+        with open(os.path.join(fd,'model_hyperparameters.json'),'w') as f:
+            json.dump(model_param, f, indent=4)
 
     def weights_init(self,m):
         if isinstance(m, nn.Conv2d):
