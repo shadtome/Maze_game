@@ -64,7 +64,7 @@ class maze_runner_rewards(Wrapper):
             #if not info[f'agent_{k}']['done'] and truncated:
                 #reward[k] -=info['timer']
 
-            #reward[k] = np.clip(reward[k],-1,1)
+            reward[k] = np.clip(reward[k],-1,1)
             
 
             self.cum_rewards[k] += reward[k]

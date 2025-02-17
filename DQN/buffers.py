@@ -5,7 +5,7 @@ class SumTree:
     def __init__(self, capacity):
         self.capacity = capacity
         self.tree = np.zeros(2 * capacity - 1)  # Binary tree for sum priorities
-        self.data = np.zeros(capacity, dtype=object)  # Store experiences
+        self.data = np.array([None]*capacity)  # Store experiences
         self.size = 0
         self.write = 0
     
@@ -70,10 +70,13 @@ class PERBuffer:
     def sample(self, batch_size):
         batch = []
         segment = self.tree.total_priority() / batch_size
+        it = 0
         
         for i in range(batch_size):
             s = random.uniform(segment * i, segment * (i + 1))
             idx, priority, experience = self.tree.sample(s)
+            if experience is None:
+                continue
             batch.append((idx, experience, priority))
         
         return batch
