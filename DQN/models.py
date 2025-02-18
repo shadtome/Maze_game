@@ -57,7 +57,9 @@ class basic_NN(nn.Module):
         
         self.functions = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(input, n_actions)
+            nn.Linear(input, 128),
+            nn.ReLU(),
+            nn.Linear(128,n_actions)
         )
 
 
@@ -94,13 +96,6 @@ class CNN_version1(nn.Module):
             nn.ReLU(),
             nn.Flatten(),
             nn.Linear(64*int((h-3)/2)*int((w-3)/2),32),
-            nn.ReLU(),
-        )
-        # Takes inputs of the form (pos,g_pos,done,dist)
-        self.global_function = nn.Sequential(
-            nn.Linear(4,32),
-            nn.ReLU(),
-            nn.Linear(32,12),
             nn.ReLU(),
         )
 

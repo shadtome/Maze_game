@@ -229,15 +229,15 @@ class Maze_Training:
             self.Q_values[a].append(avg_q_values[a])
         
         # --- pick the Q values corresponding to the picked actions --- #
-        selected_q_values = q_values.gather(1,actions.unsqueeze(1)).squeeze(1)
+        selected_q_values = q_values.gather(1,actions.unsqueeze(1)).squeeze()
         
 
         with torch.no_grad():
             # --- get next actions where Q(s',a) is maximized --- #
-            next_actions = self.agents.Q_fun(next_local_s, next_global_s).argmax(1, keepdim=True).detach()
+            next_actions = self.agents.Q_fun(next_local_s, next_global_s).argmax(1, keepdim=True)
 
             # --- calculate Q'(s',a') where a' is the actions maximies from Q(s',a) above --- #
-            next_q_values = self.target_Q_net(next_local_s,next_global_s).gather(1,next_actions).squeeze(1)
+            next_q_values = self.target_Q_net(next_local_s,next_global_s).detach().gather(1,next_actions).squeeze(1)
             
             # --- calculate the estimator of the Bellmann equation --- #
             target = rewards + self.gamma*next_q_values * (1-terminated.float())
@@ -304,7 +304,7 @@ class Maze_Training:
         self.epsilon = max(final_epsilon,linear_decay)
 
 
-    def train(self, init_pos = None):
+    def train(self, agents_pos=None, targets_pos = None):
         """ Train the agents in maze runner"""
 
         #--- initialize random maze --- #
@@ -317,7 +317,7 @@ class Maze_Training:
                        num_agents=self.n_agents,vision_len=self.agents.vision
                         ,maze=maze, render_mode='rgb_array',obs_type = 'spatial',
                         action_type=self.agents.action_type,
-                        init_pos = init_pos)
+                        agents_pos = agents_pos, targets_pos = targets_pos)
         
         # --- environment wrappers --- #
         #env = gym.wrappers.RecordEpisodeStatistics(env,buffer_length=n_episodes)
@@ -389,6 +389,7 @@ class Maze_Training:
 
                 # --- update policy Q-net --- #
                 if len(self.replay_buffer)>=int(self.replay_buffer_size/10) and frame % self.policy_update == 0:
+                    
                     # -- zero out gradients --- #
                     self.optimizer.zero_grad()
                     

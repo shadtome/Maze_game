@@ -54,7 +54,7 @@ class SumTree:
         return self.tree[0]  # Root node stores total priority
     
     def __len__(self):
-        return len(self.data)
+        return self.size
     
 
 class PERBuffer:

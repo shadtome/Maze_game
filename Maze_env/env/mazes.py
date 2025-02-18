@@ -18,23 +18,57 @@ import torch
 # 3 move left
 # 4 move right
 
+
+# -- Reward parameters -- #
+DO_ACTION = 0
+WALL = 0
+GOAL = 1
+STAY = 0
+
 class maze_env(gym.Env):
     metadata = {'render_modes': ['human','rgb_array'],'render_fps':4,
                 'obs_type': ['rgb','spatial','basic'],
                 'action_type': ['full','cardinal']}
+    
     def __init__(self, maze, len_game=1000,num_agents=1,vision_len = 1, 
                  action_type = 'full',render_mode = None, obs_type=None,
-                 init_pos = None):
+                 agents_pos= None, targets_pos = None):
+        
+        """ Maze Runner environment:
+
+            maze: inputed maze 
+
+            len_game: the total length of the game
+
+            num_agents: number of agents in the environment
+
+            vision_len: the length of vision the agents can see
+
+            action_type: either 'full' for the cardinal directions and stop actions, 
+                        while 'cardinal' is just the cardinal directions.
+
+            render_mode: 'rgb_array' for training, while 'human' will output a pygame instance
+            obs_type: either 'spatial' for local rgb colored images around the agents, or 'basic' 
+                        for just positions of agents and goals.
+
+            agents_pos: the environment randomly selects the agents positions if this is None, 
+                        otherwise you can input a list of the agents position
+
+            targets_pos: the environment randomly selects the targets positions, if this is None,
+                        otherwise,, you can input a list of the target's position"""
         super(maze_env, self).__init__()
 
         
-        
-        self.window_size = 512 #512
+        # --- window size for pygame output --- #
+        self.window_size = 512 
 
+        # --- maze and positions of agents and targets --- #
         self.maze = maze
-        self.init_pos = init_pos
+        self.init_pos = dict()
+        self.init_pos['agents'] = agents_pos
+        self.init_pos['targets'] = targets_pos
         
-        
+        # -- maze information -- #
         self.n_cols = maze.grid_shape[1]
         self.n_rows = maze.grid_shape[0]
         self.min_size = min(self.n_cols,self.n_rows)
@@ -48,11 +82,11 @@ class maze_env(gym.Env):
         self.agents_path = None
         
 
-        # Define observation and action spaces
+        # -- observation space type -- #
         assert obs_type is None or obs_type in self.metadata['obs_type']
         self.obs_type = obs_type
 
-        # Action space
+        # -- action space type -- #
         assert action_type is None or action_type in self.metadata['action_type']
         self.action_type = action_type
 
@@ -65,7 +99,7 @@ class maze_env(gym.Env):
 
         self.agent_target_obs_space = gym.spaces.Discrete(self.n_cols*self.n_rows)
 
-        # Observation Space, depending on the obs_type
+        # -- observation space -- #
         self.observation_space = None
         if self.obs_type == 'basic':
 
@@ -107,11 +141,16 @@ class maze_env(gym.Env):
         self.clock = None
 
     def new_maze(self,maze):
+        """ Used to give the environment a new maze design"""
         self.__init__(maze,self.len_game,self.num_agents,
                       self.vision_len,self.action_type,self.render_mode,
-                      self.obs_type, init_pos=self.init_pos)
+                      self.obs_type,
+                      agents_pos = self.init_pos['agents'],
+                      targets_pos=self.init_pos['targets'])
 
     def __global__(self,a):
+        """ Get global stats for the state 
+            a: agent index """
         global_var = []
         pos = self.agent_positions[a]
         g_pos = self.agent_goals[a]
@@ -122,6 +161,10 @@ class maze_env(gym.Env):
         return np.array(global_var)
 
     def __spatial__(self, a):
+        """ gets local spatial information, i.e. get the local image data for the 
+            agent, which includes the walls, other agents, their goals and 
+            it has a weight to measure the distance from it."""
+        
         grid_size = 2*self.vision_len + 1
         
         vision = self._get_vision(a)
@@ -197,6 +240,7 @@ class maze_env(gym.Env):
         return spatial      
 
     def __localRegion__(self):
+        """Not used!"""
         # first lets get our full rgb image and pad it out 
         pix_square_size = (
             self.window_size//self.min_size
@@ -222,73 +266,60 @@ class maze_env(gym.Env):
             local.append(region.permute(1,2,0))
         return local
           
+    def __get_path__(self,pos,t_pos):
+        x = pos % self.n_cols
+        y = pos // self.n_cols
+        x_t = t_pos % self.n_cols
+        y_t = t_pos // self.n_cols
+        # -- get path from their initial location to their target -- #
+        agents_path = self.maze.find_shortest_path(c_start = (x,y),
+                                                c_end = (x_t,y_t))
+        return agents_path
+
+    
     def _init_agents(self):
+        """ Initialize the agents: this includes finding their initial positions,
+         the initial target positions, and subsequent information like being done, 
+          or the path """
 
         agent_positions = []
         agent_goals = []
         agents_done = []
         agents_path = []
-        cum_rewards = []
 
+        pos_set = set()
+        # -- first lets put in our positions that are initialized by the user -- #
+        if self.init_pos['agents'] !=None:
+            pos_set = pos_set | set(self.init_pos['agents'])
+            agent_positions = self.init_pos['agents'].copy()
+        
+        if self.init_pos['targets']!=None:
+            pos_set = pos_set | set(self.init_pos['targets'])
+            agent_goals = self.init_pos['targets'].copy()
 
-        if self.obs_type == 'basic':
-            pos = self.observation_space.sample()
+        # -- go through each agent and initalize the the positions if they have not been initalized -- #
+        for a in range(self.num_agents):
 
-            for a in range(self.num_agents):
-                pos = pos[f'agent_{a}']
-                t_pos = pos[f'target_{a}']
-                agent_positions.append(pos)
-                agent_goals.append(t_pos)
-                agents_done.append(False)
-                
-                x = pos % self.n_cols
-                y = pos // self.n_cols
-                x_t = t_pos % self.n_cols
-                y_t = t_pos // self.n_cols
-
-                agents_path = self.maze.find_shortest_path(c_start = (x,y),
-                                                        c_end = (x_t,y_t))
-            
-        elif self.obs_type == 'rgb' or self.obs_type == 'spatial':
-            
-            if self.init_pos == None:
-            
-                pos_set = set()
-                for a in range(self.num_agents):
+            # -- first lets get our agent positions -- #
+            if self.init_pos['agents'] == None:
+                pos = self.agent_target_obs_space.sample()
+                while pos in pos_set:
                     pos = self.agent_target_obs_space.sample()
-                    while pos in pos_set:
-                        pos = self.agent_target_obs_space.sample()
-                    pos_set.add(pos)
-                    agent_positions.append(pos)
-                    agents_done.append(False)
-                    t_pos = self.agent_target_obs_space.sample()
-                    while t_pos in pos_set:
-                        t_pos = self.agent_target_obs_space.sample()
-                    agent_goals.append(t_pos)
-                    x = pos % self.n_cols
-                    y = pos // self.n_cols
-                    x_t = t_pos % self.n_cols
-                    y_t = t_pos // self.n_cols
-                    agents_path.append(self.maze.find_shortest_path(c_start = (x,y),
-                                                            c_end = (x_t,y_t)))
-            else:
-                agent_positions = self.init_pos['agents'].copy()
-                agent_goals = self.init_pos['targets'].copy()
-                
-                for a in range(self.num_agents):
-                    pos = agent_positions[a]
-                    t_pos = agent_goals[a]
+                pos_set.add(pos)
+                agent_positions.append(pos)
 
-                    x = pos % self.n_cols
-                    y = pos // self.n_cols
-                    x_t = t_pos % self.n_cols
-                    y_t = t_pos // self.n_cols
-                    agents_path.append(self.maze.find_shortest_path(c_start = (x,y),
-                                                            c_end = (x_t,y_t)))
-                    
-                    
-                    
-                    agents_done.append(False)
+            # -- second lets get our target positions for the agent
+            if self.init_pos['targets'] == None:
+                t_pos = self.agent_target_obs_space.sample()
+                while t_pos in pos_set:
+                    t_pos = self.agent_target_obs_space.sample()
+                agent_goals.append(t_pos)
+
+            # -- append False for the agent is done parameter -- #
+            agents_done.append(False)
+
+            # -- get minimal path to goal -- #
+            agents_path.append(self.__get_path__(pos,t_pos))
                 
         
         self.agent_positions = agent_positions
@@ -623,32 +654,32 @@ class maze_env(gym.Env):
             # --- move the agent is the corresponding direction if there is not wall --- #
             if action == 0 and vision['UP'][0]!=1:
                 
-                rewards -=0.04
+                rewards +=DO_ACTION
                 pos -= n_cols
             elif action == 1 and vision['DOWN'][0]!=1:
                 
-                rewards -=0.04
+                rewards +=DO_ACTION
                 pos += n_cols
             elif action == 2 and vision['LEFT'][0]!=1:
                 
-                rewards -=0.04
+                rewards +=DO_ACTION
                 pos -= 1
             elif action == 3 and vision['RIGHT'][0]!=1:
                 
-                rewards -=0.04
+                rewards +=DO_ACTION
                 pos += 1
             else:
                 if action !=4:
                     # --- penalize for going against the wall --- #
                     
-                    rewards -=0.75
-                rewards -=0.1
+                    rewards +=WALL
+                rewards +=STAY
 
             # --- reward a lot surviving to the goal --- #
             if self.agent_positions[i]==self.agent_goals[i] or self.agents_done[i]:
                 #rewards +=self.len_game - self.timer 
                 
-                rewards+=2
+                rewards += GOAL
                 self.agents_done[i] = True
                 
             else:

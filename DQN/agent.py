@@ -150,7 +150,8 @@ class maze_agents:
 
         return state, actions, next_state, reward, terminated
     
-    def run_agent(self,maze, len_game = 50, num_agents = 1,epsilon = 0, sample_prob = False, init_pos = None):
+    def run_agent(self,maze, len_game = 50, num_agents = 1,epsilon = 0, sample_prob = False,
+                  agents_pos=None, targets_pos = None):
         """Run the agent in the enviroment that is human readable using pygame.
             maze: a maze from the maze_dataset, needs the connection_list,
             len_game: max length of steps in the game
@@ -166,7 +167,8 @@ class maze_agents:
             # make enviroment for testing
             env = gym.make('Maze_env/MazeRunner-v0',len_game = len_game,num_agents=num_agents,vision_len=self.vision,maze=maze,
                            render_mode='human',obs_type = 'spatial',
-                           action_type = self.action_type, init_pos = init_pos)
+                           action_type = self.action_type, 
+                           agents_pos = agents_pos, targets_pos = targets_pos)
 
             env = self.add_wrappers(env)
 

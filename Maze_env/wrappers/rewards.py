@@ -4,10 +4,15 @@ import numpy as np
 
 
 # --- Reward Hyperparameters --- #
-ALPHA = 0.95
+SEE_GOAL = 0
+DONT_SEE_GOAL = 0
+NEW_PLACE = 0
+OLD_PLACE = 0
+GET_CLOSER = 0
+GET_FARTHER = 0
 
 class maze_runner_rewards(Wrapper):
-    def __init__(self,env,gamma = 0.99,epsilon = 1e-8,):
+    def __init__(self,env):
 
         super().__init__(env)
         
@@ -31,10 +36,10 @@ class maze_runner_rewards(Wrapper):
             if pos not in self.agents_past[f'agent_{k}']:
                 self.agents_past[f'agent_{k}'].add(pos)
                 
-                reward[k] +=0.4
+                reward[k] +=NEW_PLACE
             else:
                
-                reward[k]-=0.25
+                reward[k]+=OLD_PLACE
 
             # --- check neighborhoods for goals and other agents --- #
             index = -1
@@ -46,10 +51,10 @@ class maze_runner_rewards(Wrapper):
                 
             if index!=-1:
                 
-                reward[k] += pow(ALPHA,index+1)
+                reward[k] += pow(SEE_GOAL,index+1)
             else:
                
-                reward[k] -= 0.1
+                reward[k] += DONT_SEE_GOAL
             
             #if len(set(self.agents_recent_loc[f'agent_{k}']))<3:
             #    reward[k]-=0.2
@@ -57,9 +62,9 @@ class maze_runner_rewards(Wrapper):
             #    reward[k]+=0.1
 
             if self.agents_dist[f'agent_{k}'][0]>self.agents_dist[f'agent_{k}'][1]:
-                reward[k]+=0.2
+                reward[k]+=GET_CLOSER
             else:
-                reward[k]-=0.1
+                reward[k]+=GET_FARTHER
 
             #if not info[f'agent_{k}']['done'] and truncated:
                 #reward[k] -=info['timer']
