@@ -205,7 +205,7 @@ class Maze_Training:
         
         return self.transform(local_state,global_state, action, next_local_state, next_global_state, reward,terminated)
 
-    def compute_loss(self):
+    def compute_loss(self,frame):
         """This is to compute the loss between the target Q-network and the policy Q-network.
         This also adds a entropy term.  The entropy terms wants to be maximized so that it is not
         determinisitic, i.e., staying in one spot forever.
@@ -231,6 +231,13 @@ class Maze_Training:
         # --- pick the Q values corresponding to the picked actions --- #
         selected_q_values = q_values.gather(1,actions.unsqueeze(1)).squeeze()
         
+        """
+        with torch.no_grad():
+    next_q_values = q_net(next_state)  # Use the online network
+    best_actions = torch.argmax(next_q_values, dim=1)  # Select best actions
+    target_q_values = target_net(next_state).gather(1, best_actions.unsqueeze(1)).squeeze(1)  # Use target network values
+expected_q = reward + gamma * target_q_values * (1 - done)
+"""
 
         with torch.no_grad():
             # --- get next actions where Q(s',a) is maximized --- #
@@ -251,6 +258,10 @@ class Maze_Training:
 
         # --- compute the entropy of the distribution p(-|s)  --- #
         entropy = -torch.sum(action_probs * torch.log(action_probs + 1e-6),dim=1)
+
+        if frame% 10000 == 0:
+            print(f"Max Q-value: {selected_q_values.max().item()}, Max Target Values {target.max().item()}, minus: {(target- selected_q_values).max().item()}")
+            print(f'Max Entropy: {entropy.max().item()}, Min Entropy: {entropy.min().item()}')
         
         # --- we want to maximize entropy to make it less deterministic, so we take the negative --- #
         loss -=self.lambda_entropy * entropy.mean()
@@ -335,7 +346,6 @@ class Maze_Training:
 
             # --- reset the environment --- #
             state,info = env.reset(options = {'new_maze': maze})
-            
             done = False
 
             # --- cumulitive episode reward --- #
@@ -352,6 +362,7 @@ class Maze_Training:
                 
                 # --- get next state and rewards from this action --- #
                 next_state, reward, terminated, truncated, info = env.step(action)
+                
 
                 # --- save each of the agents state, rewards, ect.. --- #
                 for a in range(self.n_agents):
@@ -394,7 +405,7 @@ class Maze_Training:
                     self.optimizer.zero_grad()
                     
                     # --- compute loss --- #
-                    loss,action_prob = self.compute_loss()
+                    loss,action_prob = self.compute_loss(frame)
 
                     # --- save losses --- #
                     self.losses.append(loss.detach().cpu().numpy())
@@ -403,7 +414,7 @@ class Maze_Training:
                     loss.backward()
 
                     # --- cutoff gradients --- #
-                    nn.utils.clip_grad_norm_(self.agents.Q_fun.parameters(),1)
+                    #nn.utils.clip_grad_norm_(self.agents.Q_fun.parameters(),1)
 
                     # --- step optimizer --- #
                     self.optimizer.step()

@@ -150,7 +150,7 @@ class maze_agents:
 
         return state, actions, next_state, reward, terminated
     
-    def run_agent(self,maze, len_game = 50, num_agents = 1,epsilon = 0, sample_prob = False,
+    def run_agent(self,maze, len_game = 50, n_episodes = 1, num_agents = 1,epsilon = 0, sample_prob = False,
                   agents_pos=None, targets_pos = None):
         """Run the agent in the enviroment that is human readable using pygame.
             maze: a maze from the maze_dataset, needs the connection_list,
@@ -171,36 +171,36 @@ class maze_agents:
                            agents_pos = agents_pos, targets_pos = targets_pos)
 
             env = self.add_wrappers(env)
-
-            obs, info = env.reset()
-            for a in range(num_agents):
-                agents_per[f'agent_{a}'] = [obs[f'local_{a}']]
-
-            done = False
-
-            cum_reward = 0
-            # Play
-            while not done:
-                # Get each of the agents action
-                action = self.get_action(env,num_agents,obs,epsilon)
-                
-                next_obs, reward, terminated, truncated, info = env.step(action)
-                
+            for i in range(n_episodes):
+                obs, info = env.reset()
                 for a in range(num_agents):
-                    agents_per[f'agent_{a}'].append(next_obs[f'local_{a}'])
-                cum_reward += reward
+                    agents_per[f'agent_{a}'] = [obs[f'local_{a}']]
 
-                if sample_prob == True:
-                    pic = self.compute_action_probs(next_obs['local_0'])
-                    print(pic.numpy())
+                done = False
 
-                done = terminated or truncated
-                obs = next_obs
-                self.__last_replay_agents_perspective__ = agents_per
+                cum_reward = 0
+                # Play
+                while not done:
+                    # Get each of the agents action
+                    action = self.get_action(env,num_agents,obs,epsilon)
+                    
+                    next_obs, reward, terminated, truncated, info = env.step(action)
+                    
+                    for a in range(num_agents):
+                        agents_per[f'agent_{a}'].append(next_obs[f'local_{a}'])
+                    cum_reward += reward
 
+                    if sample_prob == True:
+                        pic = self.compute_action_probs(next_obs['local_0'])
+                        print(pic.numpy())
+
+                    done = terminated or truncated
+                    obs = next_obs
+                    self.__last_replay_agents_perspective__ = agents_per
+                print(f'cumulative reward: {cum_reward}')
             env.close()
             self.__last_replay_agents_perspective__ = agents_per
-            print(f'cumulative reward: {cum_reward}')
+            
 
     def animate_last_replay(self,agent_id):
         """Takes the last run_agent and saved perspectives of the agents and 

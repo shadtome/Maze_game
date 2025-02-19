@@ -4,12 +4,12 @@ import numpy as np
 
 
 # --- Reward Hyperparameters --- #
-SEE_GOAL = 0
-DONT_SEE_GOAL = 0
-NEW_PLACE = 0
-OLD_PLACE = 0
-GET_CLOSER = 0
-GET_FARTHER = 0
+SEE_GOAL = 0.99
+DONT_SEE_GOAL = -0.1
+NEW_PLACE = 0.4
+OLD_PLACE = -0.1
+GET_CLOSER = 0.3
+GET_FARTHER = -0.1
 
 class maze_runner_rewards(Wrapper):
     def __init__(self,env):
@@ -69,12 +69,12 @@ class maze_runner_rewards(Wrapper):
             #if not info[f'agent_{k}']['done'] and truncated:
                 #reward[k] -=info['timer']
 
-            reward[k] = np.clip(reward[k],-1,1)
+            #reward[k] = np.clip(reward[k],-1,1)
             
 
             self.cum_rewards[k] += reward[k]
         
-        truncated = truncated or all(reward <-0.5*info['max_pos'] for reward in self.cum_rewards)
+        #truncated = truncated or all(reward <-1*info['max_pos'] for reward in self.cum_rewards)
        
         return new_obs, reward, terminated, truncated, info
     

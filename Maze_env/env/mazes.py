@@ -20,10 +20,10 @@ import torch
 
 
 # -- Reward parameters -- #
-DO_ACTION = 0
-WALL = 0
-GOAL = 1
-STAY = 0
+DO_ACTION = 0.0
+WALL = -0.50
+GOAL = 1.0
+STAY = 0.0
 
 class maze_env(gym.Env):
     metadata = {'render_modes': ['human','rgb_array'],'render_fps':4,
@@ -307,6 +307,8 @@ class maze_env(gym.Env):
                     pos = self.agent_target_obs_space.sample()
                 pos_set.add(pos)
                 agent_positions.append(pos)
+            else:
+                pos = self.init_pos['agents'][a]
 
             # -- second lets get our target positions for the agent
             if self.init_pos['targets'] == None:
@@ -314,6 +316,8 @@ class maze_env(gym.Env):
                 while t_pos in pos_set:
                     t_pos = self.agent_target_obs_space.sample()
                 agent_goals.append(t_pos)
+            else:
+                t_pos = self.init_pos['targets'][a]
 
             # -- append False for the agent is done parameter -- #
             agents_done.append(False)
