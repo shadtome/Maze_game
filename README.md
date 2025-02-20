@@ -11,5 +11,8 @@ Below we have an image of such a maze with circles as the agents and the squares
 ## Training Data
 To train our agents, we used the local information around each agent, based on if there is nothing, a wall, another agent, and their own goal.  It is represented as a rgb image with different gradients of the colors to represent how far it is and if its harder to see.  For an example, the following is a animation of their perspective.
 
-- Put html animation here
+![Demo](media/test.gif)
+In this gif, the red represents other agents it can see, while green represents its own goal.
+
+We also include some global information, the position of the agent and the goal using the equation: $$\text{pos} = \text{total cols} \cdot \text{col} + \text{row}$$, and we also include if the agent is done and the Manhattan distance to their goal.
 

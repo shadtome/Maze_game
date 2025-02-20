@@ -20,6 +20,7 @@ import DQN.buffers as buffers
 #################
 # ----- Fixed Hyperparameters ---------- #
 MAZE_UPDATE = 100
+RANDOM_STATE = 49
 
 
 
@@ -32,11 +33,14 @@ class Maze_Training:
                  target_update = 1000,
                  gamma=0.99,tau = 0.01, batch_size=32, lambda_entropy = 0.01, 
                  lr=1e-3,start_epsilon=1,final_epsilon=0.1,n_frames=50000,
-                 beta = 0.1, alpha = 0.6):
+                 beta = 0.1, alpha = 0.6, per = False,
+                 agent_pos = None, target_pos = None):
         """Used to train a deep Q-network for agents exploring a maze.
+        name: string used for saving the name and for loading
 
         maze_dataset: a dataset of mazes that come from the maze_dataset package
 
+        maze_agent: 
         n_agents: the maze enviroment can run multiple agents and you can accumulate their 
         experiences together.  But it is aimed to be adversarial in the sense we want to avoid
         others
@@ -52,14 +56,15 @@ class Maze_Training:
 
 
         # --- Dynamic Hyperparameters --- #
-        self.gamma = gamma 
-        self.tau = tau   
-        self.batch_size = batch_size 
-        self.lambda_entropy = lambda_entropy
-
-        self.replay_buffer_size = replay_buffer_size
-        self.policy_update = policy_update
-        self.target_update = target_update
+        self.gamma = gamma  # discount factor
+        self.tau = tau   # soft update factor
+        self.batch_size = batch_size  # batch size
+        self.lambda_entropy = lambda_entropy # entropy regularization term
+        self.alpha = alpha # priority experience replay buffer parameter
+        self.beta = beta # greedy epsilon parameter 
+        self.replay_buffer_size = replay_buffer_size  # replay buffer size
+        self.policy_update = policy_update  # frequency of policy update (backpropogation)
+        self.target_update = target_update  # frequency of target update (soft update)
 
 
         # The agent with the Q_function
@@ -73,22 +78,34 @@ class Maze_Training:
         # Collection of mazes (can be single maze or multiple)
         self.mazes = maze_dataset
 
-        # Number of agents
+        # -- number of total agents -- #
         self.n_agents = n_agents
 
+        # -- agent and target initial positions, if fixed -- #
+        self.agent_pos = agent_pos
+        self.target_pos = target_pos
 
-        # max length of each episode
+
+        # -- maximum length of episodes -- #
         self.len_game = len_game
 
-        # Replay buffer
-        #self.replay_buffer = deque(maxlen=self.replay_buffer_size)
-        self.replay_buffer = buffers.PERBuffer(capacity=self.replay_buffer_size,alpha=alpha)
+        # -- Replay Buffer -- #
+        self.per = per  # signifies to use priority replay buffer
+        
+        if self.per:
+            # priority buffer
+            self.replay_buffer = buffers.PERBuffer(capacity=self.replay_buffer_size,alpha=alpha)
+        else:
+            # uniform buffer
+            self.replay_buffer = deque(maxlen=self.replay_buffer_size)
 
         # file name for saving and loading
         self.name = name
 
-        # Where to start and end the number of episodes
+        # -- number of total frames -- #
         self.n_frames = n_frames
+
+        # -- where to stop the epsilon decay policy with respect to number of total frames -- #
         self.decay_stop = int(n_frames*beta)
 
         # --- epsilon-greedy policy --- #
@@ -96,10 +113,10 @@ class Maze_Training:
         self.start_epsilon = start_epsilon
         self.final_epsilon = final_epsilon
 
-        # Learning Rate
+        # -- learning rate -- #
         self.lr = lr
 
-        # Used for training
+        # -- loss function -- #
         #self.loss_fun = nn.MSELoss()
         self.loss_fun = nn.SmoothL1Loss()  # The Huber loss function, more stable to outliers
 
@@ -108,10 +125,10 @@ class Maze_Training:
         self.optimizer = torch.optim.Adam(self.agents.Q_fun.parameters(),lr=self.lr,amsgrad=False)
         #self.optimizer = torch.optim.RMSprop(self.agents.Q_fun.parameters(),lr=lr)
 
-        # Schedular to lower the lr
+        # -- scheduler for the learning rate -- #
         self.scheduler = StepLR(self.optimizer,step_size=n_frames*0.01,gamma=0.1)
 
-        # results from training
+        # -- lists for saving the results -- #
         self.losses = []
         self.cum_reward = {}
         self.actions_taken = []
@@ -191,14 +208,14 @@ class Maze_Training:
         i.e., it is filled with initial state, action take, then the resulting state with corresponding reward"""
 
         # sample from the buffer
-        #sample = random.sample(self.replay_buffer,batch_size)
-        ###########################################
-        batch = self.replay_buffer.sample(batch_size)
+        if self.per:
+            batch = self.replay_buffer.sample(batch_size)
         
-        sample = [exp for _, exp ,_ in batch]
-        if type(sample) == int:
-            print(sample)
-        ###########################################
+            sample = [exp for _, exp ,_ in batch]
+        else:
+            random.seed(RANDOM_STATE)
+            sample = random.sample(self.replay_buffer,batch_size)
+        
         # get the information
 
         local_state,global_state, action, next_local_state, next_global_state, reward,terminated = zip(*sample)
@@ -295,11 +312,19 @@ expected_q = reward + gamma * target_q_values * (1 - done)
         return td_e.detach().cpu().numpy()
     
     def append_to_RB(self,local_s,global_s,action,n_local_s,n_global_s,reward,terminated,agent_id):
-        """Transform the inputs"""
-        td_e = self.td_error(local_s,global_s,action,n_local_s,n_global_s,reward,terminated)
+        """Append the experience to the replay buffer depending on the type of buffer"""
 
-        self.replay_buffer.add((local_s,global_s,action,n_local_s,n_global_s,reward,terminated),td_e)
+        td_e = self.td_error(local_s,global_s,action,n_local_s,n_global_s,reward,terminated)
         self.td_errors[agent_id].append(td_e)
+
+        if self.per:
+            self.replay_buffer.add((local_s,global_s,action,
+                                    n_local_s,n_global_s,
+                                    reward,terminated),td_e)
+        else:
+            self.replay_buffer.append([local_s,global_s,action,
+                                            n_local_s,n_global_s,
+                                            reward,terminated])
 
 
     
@@ -315,7 +340,7 @@ expected_q = reward + gamma * target_q_values * (1 - done)
         self.epsilon = max(final_epsilon,linear_decay)
 
 
-    def train(self, agents_pos=None, targets_pos = None):
+    def train(self):
         """ Train the agents in maze runner"""
 
         #--- initialize random maze --- #
@@ -328,7 +353,7 @@ expected_q = reward + gamma * target_q_values * (1 - done)
                        num_agents=self.n_agents,vision_len=self.agents.vision
                         ,maze=maze, render_mode='rgb_array',obs_type = 'spatial',
                         action_type=self.agents.action_type,
-                        agents_pos = agents_pos, targets_pos = targets_pos)
+                        agents_pos = self.agent_pos, targets_pos = self.target_pos)
         
         # --- environment wrappers --- #
         #env = gym.wrappers.RecordEpisodeStatistics(env,buffer_length=n_episodes)
@@ -367,14 +392,12 @@ expected_q = reward + gamma * target_q_values * (1 - done)
                 # --- save each of the agents state, rewards, ect.. --- #
                 for a in range(self.n_agents):
 
-                    #self.replay_buffer.append([state[f'local_{a}'],state[f'global_{a}'],action[a],
-                    #                        next_state[f'local_{a}'],next_state[f'global_{a}'],
-                    #                        reward[a],terminated])
-                    ###################################
+                    
+                    # --- add experience to replay buffer --- #
                     self.append_to_RB(state[f'local_{a}'],state[f'global_{a}'],action[a],
                                             next_state[f'local_{a}'],next_state[f'global_{a}'],
                                             reward[a],terminated,a)
-                    ###################################
+                    
                     # --- accumulate rewards --- #
                     cum_reward[a] += reward[a]
 
@@ -565,7 +588,12 @@ expected_q = reward + gamma * target_q_values * (1 - done)
             'batch_size': self.batch_size,
             'lambda_entropy': self.lambda_entropy,
             'lr': self.lr,
-            'n_frames': self.n_frames
+            'n_frames': self.n_frames,
+            'alpha': self.alpha,
+            'beta' : self.beta,
+            'per' : self.per,
+            'agent_pos' : self.agent_pos,
+            'target_pos' : self.target_pos
         }
 
         with open(os.path.join(fd,'hyperparameters.json'),'w') as f:

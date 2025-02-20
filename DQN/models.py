@@ -121,9 +121,10 @@ class CNN_version1(nn.Module):
         q_copy.load_state_dict(self.state_dict())
         return q_copy
     
+    
 
 metadata = {
     'CNN_Basic' : CNN_Basic,
     'basic_NN': basic_NN,
-    'CNN_version1': CNN_version1
+    'CNN_version1': CNN_version1,
 }

@@ -3,13 +3,18 @@ from collections import deque
 import numpy as np
 
 
+
+
+
+
 # --- Reward Hyperparameters --- #
+GOAL = 1.0
 SEE_GOAL = 0.99
-DONT_SEE_GOAL = -0.1
+DONT_SEE_GOAL = 0.0
 NEW_PLACE = 0.4
-OLD_PLACE = -0.1
-GET_CLOSER = 0.3
-GET_FARTHER = -0.1
+OLD_PLACE = -0.0
+GET_CLOSER = 0.0
+GET_FARTHER = -0.0
 
 class maze_runner_rewards(Wrapper):
     def __init__(self,env):
@@ -30,9 +35,11 @@ class maze_runner_rewards(Wrapper):
             self.agents_dist[f'agent_{k}'].append(info[f'agent_{k}']['man_dist'])
 
             pos = info[f'agent_{k}']['pos']
+            t_pos = info[f'agent_{k}']['target']
+            agent_done = info[f'agent_{k}']['done']
             self.agents_recent_loc[f'agent_{k}'].append(pos)
 
-            # Punish for going to the same place it has already visted
+            # --- punish for revisiting spots --- #
             if pos not in self.agents_past[f'agent_{k}']:
                 self.agents_past[f'agent_{k}'].add(pos)
                 
@@ -68,6 +75,10 @@ class maze_runner_rewards(Wrapper):
 
             #if not info[f'agent_{k}']['done'] and truncated:
                 #reward[k] -=info['timer']
+
+            # --- reward for arriving at the goal --- #
+            if pos==t_pos or agent_done:
+                reward[k] += GOAL
 
             #reward[k] = np.clip(reward[k],-1,1)
             

@@ -21,8 +21,7 @@ import torch
 
 # -- Reward parameters -- #
 DO_ACTION = 0.0
-WALL = -0.50
-GOAL = 1.0
+WALL = -0.75
 STAY = 0.0
 
 class maze_env(gym.Env):
@@ -641,7 +640,6 @@ class maze_env(gym.Env):
 
         # --- get number of columns and rows --- #
         n_cols = self.n_cols
-        n_rows = self.n_rows
 
         agent_rewards = []
 
@@ -679,15 +677,12 @@ class maze_env(gym.Env):
                     rewards +=WALL
                 rewards +=STAY
 
-            # --- reward a lot surviving to the goal --- #
+            # --- determine if agent is done or not --- #
             if self.agent_positions[i]==self.agent_goals[i] or self.agents_done[i]:
-                #rewards +=self.len_game - self.timer 
                 
-                rewards += GOAL
                 self.agents_done[i] = True
                 
             else:
-                #rewards -=0.1
                 self.agent_positions[i] = pos
                 self.agents_done[i] = False
 

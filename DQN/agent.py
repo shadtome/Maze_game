@@ -21,44 +21,32 @@ class maze_agents:
     def __init__(self,maze_model,vision,action_type = 'full', **kwargs):
         """Initalize the base agent class, put the vision length to give the agents"""
 
-        ################
-        # Enviroment info
-        ## vision length of the agents
+        # -- vision of the agent -- #
         self.vision = vision
 
-        ####################
-        # state shape (3, 2*vision + 1, 2*vision + 1) 
-        # Local spatial images of the agents location 
+        # -- shape of the CNN input -- #
         self.CNN_shape = (3,2*vision + 1, 2*vision + 1)
+
+        # -- action type --#
+        # -- full for all the cardinal directions and stop -- #
         if action_type == 'full':
             self.n_actions = 5 # stay and the cardinal directions
         elif action_type == 'cardinal':
             self.n_actions = 4 # Cardinal Directions
         self.action_type = action_type
 
-        #Define Q_function neural network
+        # -- initalize the maze model -- #
         self.Q_fun = maze_model(self.CNN_shape,self.n_actions)
-        #self.Q_fun = basic_NN(self.CNN_shape,self.n_actions)
         self.Q_fun.to(device.DEVICE)
-
+        
+        # -- load the weights -- #
         if 'load' in kwargs.keys():
             self.Q_fun.load_state_dict(kwargs['load'])
         else:
-            ######################
-            # Used to randomly initalizze the weights
+            # -- randomly initalize the weights
             self.Q_fun.apply(self.weights_init)
 
-
-        #for layer in self.Q_fun.Q_function:
-         #   if isinstance(layer, nn.Linear):
-          #      nn.init.kaiming_uniform_(layer.weight, mode='fan_in', nonlinearity='relu')
-           #     if layer.bias is not None:
-            #        nn.init.zeros_(layer.bias)
-
-
-
-        ##################
-        # Animation and replay purposes
+        # -- save the last replay for the agents -- #
         self.__last_replay_agents_perspective__ = None
 
     @classmethod
@@ -89,6 +77,7 @@ class maze_agents:
         return result
     
     def transform_global_to_nn(self,global_state):
+        """ Transform global information suitable for nn inputs """
         result = torch.tensor(global_state,dtype=torch.float32,device=device.DEVICE)
         result[0:2] = result[0:2]/(self.CNN_shape[1]*self.CNN_shape[2] -1)
         result[3] = result[3]/(self.CNN_shape[1] + self.CNN_shape[2])
@@ -112,9 +101,13 @@ class maze_agents:
 
     def get_action(self,env,num_agents,state,epsilon=0):
         """ Get the actions from each agent from the state
+
             env: the environment the agent is in.
+
             num_agents: the number of agents in the environment
+
             state: the states the agents are in
+
             epsilon: the probability of taking a random action vs 1-epsilon to take 
                     a Q-network action"""
         actions = []
@@ -142,7 +135,15 @@ class maze_agents:
         
         
     def get_replay(self,env,num_agents,state,epsilon):
-        """ Get replay information from an action"""
+        """ Get replay information from an action
+            
+            env: gymnasium environment for the maze runner
+            
+            num_agents: total number of agents in the environment
+            
+            state: current state
+            
+            epsilon: probability of giving a random action"""
 
         actions = self.get_action(env,num_agents,state,epsilon)
 
@@ -153,24 +154,37 @@ class maze_agents:
     def run_agent(self,maze, len_game = 50, n_episodes = 1, num_agents = 1,epsilon = 0, sample_prob = False,
                   agents_pos=None, targets_pos = None):
         """Run the agent in the enviroment that is human readable using pygame.
+
             maze: a maze from the maze_dataset, needs the connection_list,
+
+            n_episodes: number of episodes for the agent to go through
+
             len_game: max length of steps in the game
+
             num_agents: the number of agents in the enviroment with the same Q-net
+
             epsilon: the probability of using a random action
-            sample_prob: outputs the probabilities of actions from the states"""
+
+            sample_prob: outputs the probabilities of actions from the states
+            
+            agents_pos: position of the agents in a list, where index corresponds
+                        to which agent
+            targets_pos: position of the agent's target in a list, where index corresponds
+                        to which agents' target."""
         
-        #####################
-        # Agents perspective, saved for observation after playing in the environment
+        # -- save agents perspective for viewing later -- #
         agents_per = {}
         
         with torch.no_grad():
-            # make enviroment for testing
+            # -- make environment -- #
             env = gym.make('Maze_env/MazeRunner-v0',len_game = len_game,num_agents=num_agents,vision_len=self.vision,maze=maze,
                            render_mode='human',obs_type = 'spatial',
                            action_type = self.action_type, 
                            agents_pos = agents_pos, targets_pos = targets_pos)
 
             env = self.add_wrappers(env)
+
+            # -- go through the number of episodes and enact the environment -- #
             for i in range(n_episodes):
                 obs, info = env.reset()
                 for a in range(num_agents):
@@ -181,9 +195,9 @@ class maze_agents:
                 cum_reward = 0
                 # Play
                 while not done:
-                    # Get each of the agents action
+                    # -- get actions -- #
                     action = self.get_action(env,num_agents,obs,epsilon)
-                    
+                    # -- get next observations -- #
                     next_obs, reward, terminated, truncated, info = env.step(action)
                     
                     for a in range(num_agents):
@@ -193,7 +207,7 @@ class maze_agents:
                     if sample_prob == True:
                         pic = self.compute_action_probs(next_obs['local_0'])
                         print(pic.numpy())
-
+                    # -- done -- #
                     done = terminated or truncated
                     obs = next_obs
                     self.__last_replay_agents_perspective__ = agents_per
@@ -202,13 +216,23 @@ class maze_agents:
             self.__last_replay_agents_perspective__ = agents_per
             
 
-    def animate_last_replay(self,agent_id):
+    def animate_last_replay(self,agent_id,name):
         """Takes the last run_agent and saved perspectives of the agents and 
             returns a animation of it
-            agent_id: gives the id of the agent for the perspective we want"""
+            agent_id: gives the id of the agent for the perspective we want
+            name: name of the replay to save in the media folder"""
+        
         seq_anim = self.__last_replay_agents_perspective__[f'agent_{agent_id}']
-        html = create_animation(seq_anim)
+        html, ani = create_animation(seq_anim)
         display(html)
+
+        fd = os.getcwd()
+        fd = os.path.join(fd, 'media')
+        if os.path.exists(fd) == False:
+            os.mkdir(fd)
+        fd = os.path.join(fd,f'{name}.gif')
+        ani.save(fd, writer='pillow')
+                  
 
     def save(self,name):
         """Save the agents model"""
@@ -221,7 +245,7 @@ class maze_agents:
         fd = os.path.join(fd,f'{name}')
         if os.path.exists(fd)==False:
             os.mkdir(fd)
-        
+        # -- save the agent model -- #
         torch.save(self.Q_fun.state_dict(),os.path.join(fd,f'agent.pth'))
 
         model_param = {
@@ -229,9 +253,24 @@ class maze_agents:
             'vision': self.vision,
             'action_type': self.action_type
         }
-
+        # -- save the type of model with other agent specific parameters -- #
         with open(os.path.join(fd,'model_hyperparameters.json'),'w') as f:
             json.dump(model_param, f, indent=4)
+
+        reward_structure = {
+            'GOAL' : rw.GOAL,
+            'SEE_GOAL': rw.SEE_GOAL,
+            'DONT_SEE_GOAL': rw.DONT_SEE_GOAL,
+            'NEW_PLACE' : rw.NEW_PLACE,
+            'OLD_PLACE' : rw.OLD_PLACE,
+            'GET_CLOSER': rw.GET_CLOSER,
+            'GET_FARTHER': rw.GET_FARTHER
+        }
+        # -- save reward distribution -- #
+        with open(os.path.join(fd,'reward_distribution.json'),'w') as f:
+            json.dump(reward_structure,f,indent=4)
+
+        
 
     def weights_init(self,m):
         if isinstance(m, nn.Conv2d):
@@ -270,4 +309,4 @@ def create_animation(image_sequence, interval=200):
     anim = animation.FuncAnimation(fig, update, frames=len(image_sequence), interval=interval, blit=True)
 
     # Display animation as HTML in Jupyter Notebook
-    return HTML(anim.to_jshtml())
+    return HTML(anim.to_jshtml()), anim
