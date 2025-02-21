@@ -8,13 +8,13 @@ import numpy as np
 
 
 # --- Reward Hyperparameters --- #
-GOAL = 1.0
+GOAL = 20.0
 SEE_GOAL = 0.99
-DONT_SEE_GOAL = 0.0
+DONT_SEE_GOAL = -0.5
 NEW_PLACE = 0.4
-OLD_PLACE = -0.0
-GET_CLOSER = 0.0
-GET_FARTHER = -0.0
+OLD_PLACE = -0.6
+GET_CLOSER = 0.5
+GET_FARTHER = -0.6
 
 class maze_runner_rewards(Wrapper):
     def __init__(self,env):

@@ -7,6 +7,7 @@ from collections import deque
 import numpy as np
 import random
 import matplotlib.pyplot as plt
+from IPython.display import display, clear_output
 from torch.optim.lr_scheduler import StepLR
 import os
 import device
@@ -276,9 +277,9 @@ expected_q = reward + gamma * target_q_values * (1 - done)
         # --- compute the entropy of the distribution p(-|s)  --- #
         entropy = -torch.sum(action_probs * torch.log(action_probs + 1e-6),dim=1)
 
-        if frame% 10000 == 0:
-            print(f"Max Q-value: {selected_q_values.max().item()}, Max Target Values {target.max().item()}, minus: {(target- selected_q_values).max().item()}")
-            print(f'Max Entropy: {entropy.max().item()}, Min Entropy: {entropy.min().item()}')
+        #if frame% 10000 == 0:
+        #    print(f"Max Q-value: {selected_q_values.max().item()}, Max Target Values {target.max().item()}, minus: {(target- selected_q_values).max().item()}")
+        #    print(f'Max Entropy: {entropy.max().item()}, Min Entropy: {entropy.min().item()}')
         
         # --- we want to maximize entropy to make it less deterministic, so we take the negative --- #
         loss -=self.lambda_entropy * entropy.mean()
@@ -340,9 +341,13 @@ expected_q = reward + gamma * target_q_values * (1 - done)
         self.epsilon = max(final_epsilon,linear_decay)
 
 
-    def train(self):
+    def train(self, test_agent = False, peak = False):
         """ Train the agents in maze runner"""
 
+        # Initialize the plot
+        plt.ion()  # Turn on interactive mode
+        fig, ax = plt.subplots(self.n_agents+2,2)
+        
         #--- initialize random maze --- #
         random_index = random.randint(0,len(self.mazes)-1)
         maze = self.mazes[random_index]
@@ -455,18 +460,32 @@ expected_q = reward + gamma * target_q_values * (1 - done)
                 frame+=1
 
             env.close() 
-            ep +=1    
+            ep +=1  
 
+            # -- here we have our during training functions -- #
+            if test_agent and ep % 500 == 0:
+                self.agents.run_agent(maze,
+                                      len_game = 15,
+                                      n_episodes = 5,
+                                      num_agents = self.n_agents,
+                                      epsilon=0,
+                                      agents_pos = self.agent_pos,
+                                      targets_pos = self.target_pos) 
+            if peak and ep % 500 == 0:
+                # Update the plot
+                self.update_plots(frame,fig,ax)
+                plt.pause(0.1) 
                 
-    def results(self):
-        """ This is used to print the losses over the training, 
-                and the distribution of actions.  Important for 
-                seeing if the agents are focusing too much on a action"""
-        fig, axe = plt.subplots(self.n_agents+2,2,figsize=(10,10))
-        window_size = int(self.n_frames*0.01)
+        plt.ioff()  
+        plt.show()
+
+    def update_plots(self, frame,fig, axe):
+        clear_output(wait=True)
+        window_size = int(frame*0.01)
         losses_series = pd.Series(self.losses)
         moving_avg_losses = losses_series.rolling(window=window_size).mean()
         
+        axe[0][0].cla()
         axe[0][0].plot(moving_avg_losses)
         axe[0][0].set_xlabel('frame')
         axe[0][0].set_ylabel('loss')
@@ -474,6 +493,7 @@ expected_q = reward + gamma * target_q_values * (1 - done)
 
         actions_taken = np.array(self.actions_taken)
         actions_taken = actions_taken.flatten()
+        axe[0][1].cla()
         axe[0][1].hist(actions_taken)
         axe[0][1].set_title('histogram of actions')
 
@@ -492,10 +512,12 @@ expected_q = reward + gamma * target_q_values * (1 - done)
         df = pd.DataFrame(data)
 
         # Plot using Seaborn
+        axe[1][0].cla()
         sns.lineplot(data=df, x="frame", y="Q-Value", hue="Action", ax=axe[1][0], palette="tab10")
 
 
         # --- boxplot of Q-values --- #
+        axe[1][1].cla()
         sns.violinplot(data=df, x="Action", y="Q-Value",  ax = axe[1][1])
 
 
@@ -505,6 +527,7 @@ expected_q = reward + gamma * target_q_values * (1 - done)
             scores_series = pd.Series(self.cum_reward[f'agent_{a-2}'])
             moving_avg_reward = scores_series.rolling(window=window_size).mean()
 
+            axe[a][0].cla()
             axe[a][0].plot(moving_avg_reward)
             axe[a][0].set_xlabel('frame')
             axe[a][0].set_ylabel('cum awards')
@@ -513,11 +536,21 @@ expected_q = reward + gamma * target_q_values * (1 - done)
             td_series = pd.Series(self.td_errors[a-2])
             moving_avg_td = td_series.rolling(window=window_size).mean()
 
+            axe[a][1].cla()
             axe[a][1].plot(moving_avg_td)
             axe[a][1].set_xlabel('frame')
             axe[a][1].set_ylabel('td error')
             axe[a][1].set_title('error between target and policy')
 
+        display(fig)
+
+    def results(self):
+        """ This is used to print the losses over the training, 
+                and the distribution of actions.  Important for 
+                seeing if the agents are focusing too much on a action"""
+        fig, axe = plt.subplots(self.n_agents+2,2,figsize=(10,10))
+        
+        self.update_plots(self.n_frames,axe)
 
 
         fd = os.getcwd()
