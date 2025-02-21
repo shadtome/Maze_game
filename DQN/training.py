@@ -550,7 +550,7 @@ expected_q = reward + gamma * target_q_values * (1 - done)
                 seeing if the agents are focusing too much on a action"""
         fig, axe = plt.subplots(self.n_agents+2,2,figsize=(10,10))
         
-        self.update_plots(self.n_frames,axe)
+        self.update_plots(self.n_frames,fig,axe)
 
 
         fd = os.getcwd()
