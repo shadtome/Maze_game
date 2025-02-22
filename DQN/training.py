@@ -33,7 +33,8 @@ class Maze_Training:
                  policy_update = 4,
                  target_update = 1000,
                  gamma=0.99,tau = 0.01, batch_size=32, lambda_entropy = 0.01, 
-                 lr=1e-3,start_epsilon=1,final_epsilon=0.1,n_frames=50000,
+                 lr=1e-3, lr_step_size_p = 0.01, lr_gamma = 0.1,
+                 start_epsilon=1,final_epsilon=0.1,n_frames=50000,
                  beta = 0.4, alpha = 0.6, decay = 0.1, per = False,
                  agent_pos = None, target_pos = None):
         """Used to train a deep Q-network for agents exploring a maze.
@@ -67,6 +68,8 @@ class Maze_Training:
         self.policy_update = policy_update  # frequency of policy update (backpropogation)
         self.target_update = target_update  # frequency of target update (soft update)
         self.decay = decay # decay percentage stop
+        self.lr_step_size_p = lr_step_size_p
+        self.lr_gamma = lr_gamma
 
         # The agent with the Q_function
         self.agents = maze_agent
@@ -127,7 +130,9 @@ class Maze_Training:
         #self.optimizer = torch.optim.RMSprop(self.agents.Q_fun.parameters(),lr=lr)
 
         # -- scheduler for the learning rate -- #
-        self.scheduler = StepLR(self.optimizer,step_size=n_frames*0.01,gamma=0.1)
+        self.scheduler = StepLR(self.optimizer,
+                                step_size=n_frames*lr_step_size_p,
+                                gamma=lr_gamma)
 
         # -- lists for saving the results -- #
         self.losses = []
@@ -625,6 +630,8 @@ expected_q = reward + gamma * target_q_values * (1 - done)
             'batch_size': self.batch_size,
             'lambda_entropy': self.lambda_entropy,
             'lr': self.lr,
+            'lr_step_size_p': self.lr_step_size_p,
+            'lr_gamma': self.lr_gamma,
             'n_frames': self.n_frames,
             'alpha': self.alpha,
             'beta' : self.beta,
