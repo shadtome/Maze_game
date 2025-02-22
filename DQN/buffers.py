@@ -58,10 +58,12 @@ class SumTree:
     
 
 class PERBuffer:
-    def __init__(self, capacity, alpha=0.6):
+    def __init__(self, capacity, alpha=0.6, beta=0.4, beta_increment=0.001):
         self.tree = SumTree(capacity)
-        self.alpha = alpha  # How much prioritization to use
-        self.epsilon = 1e-5  # Small value to ensure no zero priority
+        self.alpha = alpha  # Prioritization factor
+        self.beta = beta  # Importance sampling correction factor
+        self.beta_increment = beta_increment  # How fast beta increases
+        self.epsilon = 1e-5  # Small value to avoid zero priority
     
     def add(self, experience, td_error):
         priority = (abs(td_error) + self.epsilon) ** self.alpha
@@ -70,7 +72,7 @@ class PERBuffer:
     def sample(self, batch_size):
         batch = []
         segment = self.tree.total_priority() / batch_size
-        it = 0
+        min_prob = float('inf')  # For normalizing IS weights
         
         for i in range(batch_size):
             s = random.uniform(segment * i, segment * (i + 1))
@@ -78,8 +80,17 @@ class PERBuffer:
             if experience is None:
                 continue
             batch.append((idx, experience, priority))
+            min_prob = min(min_prob, priority / self.tree.total_priority())
+
+        # Compute IS weights
+        probs = np.array([p for _, _, p in batch]) / self.tree.total_priority()
+        is_weights = (probs * len(self.tree)) ** (-self.beta)
+        is_weights /= max(is_weights)  # Normalize so max weight = 1
+
+        # Append IS weights to each sample in the batch
+        #batch = [(idx, exp, p, w) for (idx, exp, p), w in zip(batch, is_weights)]
         
-        return batch
+        return batch, is_weights
     
     def update_priority(self, idx, td_error):
         priority = (abs(td_error) + self.epsilon) ** self.alpha

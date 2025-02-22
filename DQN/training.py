@@ -34,7 +34,7 @@ class Maze_Training:
                  target_update = 1000,
                  gamma=0.99,tau = 0.01, batch_size=32, lambda_entropy = 0.01, 
                  lr=1e-3,start_epsilon=1,final_epsilon=0.1,n_frames=50000,
-                 beta = 0.1, alpha = 0.6, per = False,
+                 beta = 0.4, alpha = 0.6, decay = 0.1, per = False,
                  agent_pos = None, target_pos = None):
         """Used to train a deep Q-network for agents exploring a maze.
         name: string used for saving the name and for loading
@@ -61,12 +61,12 @@ class Maze_Training:
         self.tau = tau   # soft update factor
         self.batch_size = batch_size  # batch size
         self.lambda_entropy = lambda_entropy # entropy regularization term
-        self.alpha = alpha # priority experience replay buffer parameter
-        self.beta = beta # greedy epsilon parameter 
+        self.alpha = alpha # priority experience replay buffer priority 
+        self.beta = beta # importance sampling correction
         self.replay_buffer_size = replay_buffer_size  # replay buffer size
         self.policy_update = policy_update  # frequency of policy update (backpropogation)
         self.target_update = target_update  # frequency of target update (soft update)
-
+        self.decay = decay # decay percentage stop
 
         # The agent with the Q_function
         self.agents = maze_agent
@@ -95,7 +95,7 @@ class Maze_Training:
         
         if self.per:
             # priority buffer
-            self.replay_buffer = buffers.PERBuffer(capacity=self.replay_buffer_size,alpha=alpha)
+            self.replay_buffer = buffers.PERBuffer(capacity=self.replay_buffer_size,alpha=alpha,beta=self.beta)
         else:
             # uniform buffer
             self.replay_buffer = deque(maxlen=self.replay_buffer_size)
@@ -107,7 +107,7 @@ class Maze_Training:
         self.n_frames = n_frames
 
         # -- where to stop the epsilon decay policy with respect to number of total frames -- #
-        self.decay_stop = int(n_frames*beta)
+        self.decay_stop = int(n_frames*decay)
 
         # --- epsilon-greedy policy --- #
         self.epsilon = start_epsilon
@@ -119,7 +119,7 @@ class Maze_Training:
 
         # -- loss function -- #
         #self.loss_fun = nn.MSELoss()
-        self.loss_fun = nn.SmoothL1Loss()  # The Huber loss function, more stable to outliers
+        self.loss_fun = nn.SmoothL1Loss(reduction='none')  # The Huber loss function, more stable to outliers
 
         # Optimizer
         #self.optimizer = torch.optim.SGD(self.agents.Q_fun.parameters(),lr=self.lr)
@@ -156,7 +156,7 @@ class Maze_Training:
         for target_param, policy_param in zip(self.target_Q_net.parameters(),self.agents.Q_fun.parameters()):
             target_param.data.copy_(tau * policy_param.data + (1.0 - tau) * target_param.data)
 
-    def transform(self,local_s,global_s,action,next_local_s,next_global_s,reward,terminated,single=False):
+    def transform(self,local_s,global_s,action,next_local_s,next_global_s,reward,terminated,weight=None,single=False):
 
         # we need everything to be a tensor to put into our neural network,
         # furthermore, we will need to permute our shape, since gymnasium outputs images
@@ -199,7 +199,13 @@ class Maze_Training:
         else:
             reward_t = torch.tensor(np.array(reward),dtype=torch.float32,device = device.DEVICE)
             terminated_t = torch.tensor(np.array(terminated),dtype = torch.int64,device= device.DEVICE)
-
+        
+        if weight is not None:
+            if single:
+                weight_t = torch.tensor(np.array([weight]),dtype=torch.float32,device=device.DEVICE)
+            else:
+                weight_t = torch.tensor(np.array(weight),dtype = torch.float32,device = device.DEVICE )
+            return local_st,global_st,action_t,next_local_st,next_global_st,reward_t, terminated_t, weight_t
 
         return local_st,global_st,action_t,next_local_st,next_global_st,reward_t, terminated_t
 
@@ -210,18 +216,18 @@ class Maze_Training:
 
         # sample from the buffer
         if self.per:
-            batch = self.replay_buffer.sample(batch_size)
+            batch, weights = self.replay_buffer.sample(batch_size)
         
-            sample = [exp for _, exp ,_ in batch]
+            sample = [exp for _, exp ,_  in batch]
         else:
             random.seed(RANDOM_STATE)
             sample = random.sample(self.replay_buffer,batch_size)
         
         # get the information
 
-        local_state,global_state, action, next_local_state, next_global_state, reward,terminated = zip(*sample)
+        local_state,global_state, action, next_local_state, next_global_state, reward,terminated= zip(*sample)
         
-        return self.transform(local_state,global_state, action, next_local_state, next_global_state, reward,terminated)
+        return self.transform(local_state,global_state, action, next_local_state, next_global_state, reward,terminated,weights)
 
     def compute_loss(self,frame):
         """This is to compute the loss between the target Q-network and the policy Q-network.
@@ -233,7 +239,7 @@ class Maze_Training:
                         we want to maximize entropy."""
         
         # --- get a sample of replays of past experiences --- #
-        local_s,global_s, actions,next_local_s,next_global_s, rewards, terminated = self.sample_replay(self.batch_size)
+        local_s,global_s, actions,next_local_s,next_global_s, rewards, terminated, weight = self.sample_replay(self.batch_size)
         
         # We need to find $Q^*(s,a) \approx r + \gamma * Q(s', max_{a'} Q'(s',a'))
         # Where (s,a,r,s') is from the replay buffer, Q is the policy net, Q' is the target net
@@ -269,6 +275,7 @@ expected_q = reward + gamma * target_q_values * (1 - done)
 
         # --- compute the loss between Q(s,a) and the Bellmann equation --- #
         loss = self.loss_fun(selected_q_values,target)
+        loss = (weight * loss).mean()
         
         
         # --- Calculate the probabilities p(a|s) to compute entropy--- #
@@ -414,9 +421,6 @@ expected_q = reward + gamma * target_q_values * (1 - done)
                 # -- next state --- #
                 state = next_state
 
-                
-                
-
                 # --- processes if episode is done --- #
                 done = truncated or terminated
 
@@ -425,7 +429,7 @@ expected_q = reward + gamma * target_q_values * (1 - done)
                 if len(self.replay_buffer)>=int(self.replay_buffer_size/10) and frame % self.target_update ==0:
                     
                     self.soft_update(tau=self.tau)
-
+                
                 # --- update policy Q-net --- #
                 if len(self.replay_buffer)>=int(self.replay_buffer_size/10) and frame % self.policy_update == 0:
                     
@@ -463,7 +467,7 @@ expected_q = reward + gamma * target_q_values * (1 - done)
             ep +=1  
 
             # -- here we have our during training functions -- #
-            if test_agent and ep % 500 == 0:
+            if test_agent and ep % 1000 == 0:
                 self.agents.run_agent(maze,
                                       len_game = 15,
                                       n_episodes = 5,
@@ -624,6 +628,7 @@ expected_q = reward + gamma * target_q_values * (1 - done)
             'n_frames': self.n_frames,
             'alpha': self.alpha,
             'beta' : self.beta,
+            'decay': self.decay,
             'per' : self.per,
             'agent_pos' : self.agent_pos,
             'target_pos' : self.target_pos

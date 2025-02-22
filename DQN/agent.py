@@ -1,9 +1,12 @@
 import numpy as np
 import torch
 import torch.nn as nn
+from torch.utils.data.dataloader import DataLoader
 
 import gymnasium as gym
+import Maze_env.env
 import device
+import random
 import os
 import Maze_env.wrappers.rewards as rw
 import matplotlib.pyplot as plt
@@ -214,7 +217,50 @@ class maze_agents:
                 print(f'cumulative reward: {cum_reward}')
             env.close()
             self.__last_replay_agents_perspective__ = agents_per
-            
+
+    def test_agent(self,maze_dataset, n_episodes,len_game = 50,
+                    num_agents = 1,
+                  agents_pos=None, targets_pos = None):
+        """This evaluates how good the agent is at random maze levels
+            Returns the ratio completed episodes/total number of episodes""" 
+        total_completed = 0
+        
+
+        for i in range(len(maze_dataset)):
+            id_x = random.choice(range(len(maze_dataset)))
+            maze = maze_dataset[id_x]
+            with torch.no_grad():
+                # -- make environment -- #
+                env = gym.make('Maze_env/MazeRunner-v0',len_game = len_game,
+                            num_agents=num_agents,vision_len=self.vision,maze=maze,
+                            render_mode='rgb_array',obs_type = 'spatial',
+                            action_type = self.action_type, 
+                            agents_pos = agents_pos, targets_pos = targets_pos)
+
+                env = self.add_wrappers(env)
+
+                # -- go through the number of episodes and enact the environment -- #
+                for i in range(n_episodes):
+                    obs, info = env.reset()
+
+                    done = False
+
+                    # Play
+                    while not done:
+                        # -- get actions -- #
+                        action = self.get_action(env,num_agents,obs,epsilon=0)
+                        # -- get next observations -- #
+                        next_obs, reward, terminated, truncated, info = env.step(action)
+                        
+                        
+                        # -- done -- #
+                        done = terminated or truncated
+                        obs = next_obs
+                        if done and info['agent_0']['pos'] == info['agent_0']['target']:
+                            total_completed+=1
+                env.close()
+        return total_completed/n_episodes
+               
 
     def animate_last_replay(self,agent_id,name):
         """Takes the last run_agent and saved perspectives of the agents and 
@@ -264,7 +310,8 @@ class maze_agents:
             'NEW_PLACE' : rw.NEW_PLACE,
             'OLD_PLACE' : rw.OLD_PLACE,
             'GET_CLOSER': rw.GET_CLOSER,
-            'GET_FARTHER': rw.GET_FARTHER
+            'GET_FARTHER': rw.GET_FARTHER,
+            'WALL' : Maze_env.env.mazes.WALL
         }
         # -- save reward distribution -- #
         with open(os.path.join(fd,'reward_distribution.json'),'w') as f:
