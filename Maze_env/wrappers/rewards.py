@@ -8,13 +8,13 @@ import numpy as np
 
 
 # --- Reward Hyperparameters --- #
-GOAL = 20.0
-SEE_GOAL = 0.99
-DONT_SEE_GOAL = -0.5
-NEW_PLACE = 0.4
-OLD_PLACE = -0.6
-GET_CLOSER = 0.5
-GET_FARTHER = -0.6
+GOAL = 5.0
+SEE_GOAL = 0.0
+DONT_SEE_GOAL = -0.0
+NEW_PLACE = 1.0
+OLD_PLACE = -0.5
+GET_CLOSER = 0.0
+GET_FARTHER = -0.0
 
 class maze_runner_rewards(Wrapper):
     def __init__(self,env):
@@ -77,7 +77,7 @@ class maze_runner_rewards(Wrapper):
                 #reward[k] -=info['timer']
 
             # --- reward for arriving at the goal --- #
-            if pos==t_pos or agent_done:
+            if pos==t_pos and agent_done:
                 reward[k] += GOAL
 
             #reward[k] = np.clip(reward[k],-1,1)
