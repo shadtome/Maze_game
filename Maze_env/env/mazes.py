@@ -20,18 +20,18 @@ import torch
 
 
 # -- Reward parameters -- #
-DO_ACTION = 0.0
+DO_ACTION = -0.004
 WALL = -0.75
 STAY = 0.0
 
 class maze_env(gym.Env):
-    metadata = {'render_modes': ['human','rgb_array'],'render_fps':4,
+    metadata = {'render_modes': ['human','rgb_array'],'render_fps':10,
                 'obs_type': ['rgb','spatial','basic'],
                 'action_type': ['full','cardinal']}
     
     def __init__(self, maze, len_game=1000,num_agents=1,vision_len = 1, 
                  action_type = 'full',render_mode = None, obs_type=None,
-                 agents_pos= None, targets_pos = None):
+                 agents_pos= None, targets_pos = None, start_dist = None):
         
         """ Maze Runner environment:
 
@@ -80,6 +80,15 @@ class maze_env(gym.Env):
         self.agents_done = None
         self.agents_path = None
         
+
+        # -- start distance -- #
+        self.start_dist = start_dist
+        if self.start_dist==None:
+            self.start_dist = self.n_cols + self.n_rows + 1
+        else:
+            # check if the distance is allowable:
+            if self.start_dist <=0:
+                raise ValueError(f'start_dist must be greater then 0')
 
         # -- observation space type -- #
         assert obs_type is None or obs_type in self.metadata['obs_type']
@@ -275,7 +284,15 @@ class maze_env(gym.Env):
                                                 c_end = (x_t,y_t))
         return agents_path
 
-    
+    def __update_init_pos__(self,pos,t_pos):
+        self.init_pos['agents'] = pos
+        self.init_pos['targets'] = t_pos
+
+    def __update_start_dist__(self,start_dist=None):
+        self.start_dist = start_dist
+        if self.start_dist == None:
+            self.start_dist = self.n_cols + self.n_rows + 1
+
     def _init_agents(self):
         """ Initialize the agents: this includes finding their initial positions,
          the initial target positions, and subsequent information like being done, 
@@ -302,7 +319,7 @@ class maze_env(gym.Env):
             # -- first lets get our agent positions -- #
             if self.init_pos['agents'] == None:
                 pos = self.agent_target_obs_space.sample()
-                while pos in pos_set:
+                while pos in pos_set :
                     pos = self.agent_target_obs_space.sample()
                 pos_set.add(pos)
                 agent_positions.append(pos)
@@ -312,8 +329,10 @@ class maze_env(gym.Env):
             # -- second lets get our target positions for the agent
             if self.init_pos['targets'] == None:
                 t_pos = self.agent_target_obs_space.sample()
-                while t_pos in pos_set:
+                dist = self.manhattan_dist(pos,t_pos)
+                while t_pos in pos_set or dist > self.start_dist:
                     t_pos = self.agent_target_obs_space.sample()
+                    dist = self.manhattan_dist(pos,t_pos)
                 agent_goals.append(t_pos)
             else:
                 t_pos = self.init_pos['targets'][a]
@@ -568,7 +587,14 @@ class maze_env(gym.Env):
 
     def reset(self,seed=None,options=None):
         if options!=None:
-            self.new_maze(options['new_maze'])
+            if 'new_maze' in options:
+                self.new_maze(options['new_maze'])
+            if 'agent_pos' in options:
+                self.__update_init_pos__(options['agent_pos'],None)
+            if 'target_pos' in options:
+                self.__update_init_pos__(None,options['target_pos'])
+            if 'start_dist' in options:
+                self.__update_start_dist__(options['start_dist'])
             return self.reset()
         else:
             super().reset(seed=seed)

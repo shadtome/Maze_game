@@ -8,18 +8,66 @@ import numpy as np
 
 
 # --- Reward Hyperparameters --- #
-GOAL = 10.0
-SEE_GOAL = 2.0
+GOAL = 40.0
+SEE_GOAL = 0.99
 DONT_SEE_GOAL = -0.5
-NEW_PLACE = 1.0
-OLD_PLACE = -0.8
+NEW_PLACE = 0.4
+OLD_PLACE = -0.6
 GET_CLOSER = 0.5
 GET_FARTHER = -0.6
+DIST = 0.0
+
+class reward_dist:
+    def __init__(self, **kwargs):
+        """Set up the reward distribution for the agent.
+        The following are the possible reward parameters
+        GOAL:
+        SEE_GOAL:
+        DONT_SEE_GOAL:
+        NEW_PLACE:
+        OLD_PLACE:
+        GET_CLOSER:
+        GET_CLOSER_CONSTANT:
+        GET_FARTHER:
+        GET_FARTHER_CONSTANT:
+        DIST:
+        """
+        # -- Reward parameters -- #
+        self.rewards = {
+            'GOAL': 1.0,
+            'SEE_GOAL': 0.0,
+            'DONT_SEE_GOAL': -0.0,
+            'NEW_PLACE': 0.0,
+            'OLD_PLACE': -0.0,
+            'GET_CLOSER': 0.0,
+            'GET_CLOSER_CONSTANT': 0.0,
+            'GET_FARTHER': -0.0,
+            'GET_FARTHER_CONSTANT': -0.0,
+            'DIST': 0.0
+        }
+
+        self.change_rewards(**kwargs)
+
+    def change_rewards(self, **kwargs):
+        """Takes any of the key words for the 
+        goals and changes them."""
+        for k in kwargs:
+            if k in self.rewards:
+                self.rewards[k] = kwargs[k]
+
+    def __getitem__(self,item):
+        return self.rewards[item]
+        
+
+    
 
 class maze_runner_rewards(Wrapper):
-    def __init__(self,env):
+    def __init__(self,env, rewards_dist):
 
         super().__init__(env)
+
+        # -- rewards distribution -- #
+        self.rewards_dist = rewards_dist
         
         self.agents_dist = {}
         self.agents_recent_loc = {}
@@ -34,6 +82,7 @@ class maze_runner_rewards(Wrapper):
         for k in range(info['n_agents']):
             self.agents_dist[f'agent_{k}'].append(info[f'agent_{k}']['man_dist'])
 
+            # --- positions of the agent and the goal --- #
             pos = info[f'agent_{k}']['pos']
             t_pos = info[f'agent_{k}']['target']
             agent_done = info[f'agent_{k}']['done']
@@ -41,12 +90,13 @@ class maze_runner_rewards(Wrapper):
 
             # --- punish for revisiting spots --- #
             if pos not in self.agents_past[f'agent_{k}']:
-                self.agents_past[f'agent_{k}'].add(pos)
+                self.agents_past[f'agent_{k}'][pos] = 1
                 
-                reward[k] +=NEW_PLACE
+                reward[k] +=self.rewards_dist['NEW_PLACE']
             else:
-               
-                reward[k]+=OLD_PLACE
+                # --- punish corresponding to how many times it visited --- #
+                self.agents_past[f'agent_{k}'][pos]+=1
+                reward[k]+=self.rewards_dist['OLD_PLACE']* float(self.agents_past[f'agent_{k}'][pos])
 
             # --- check neighborhoods for goals and other agents --- #
             index = -1
@@ -58,30 +108,30 @@ class maze_runner_rewards(Wrapper):
                 
             if index!=-1:
                 
-                reward[k] += SEE_GOAL/np.log(2 + index)
+                reward[k] += self.rewards_dist['SEE_GOAL']/np.log(2 + index)
             else:
                
-                reward[k] += DONT_SEE_GOAL
+                reward[k] += self.rewards_dist['DONT_SEE_GOAL']
             
-            #if len(set(self.agents_recent_loc[f'agent_{k}']))<3:
-            #    reward[k]-=0.2
-            #else:
-            #    reward[k]+=0.1
 
+            reward[k] += self.rewards_dist['DIST']/(1 + pow(info[f'agent_{k}']['man_dist'],1))
+
+            # --- reward/ punish for getting closer/farther from the goal --- #
             if self.agents_dist[f'agent_{k}'][0]>self.agents_dist[f'agent_{k}'][1]:
-                reward[k]+=GET_CLOSER
+                reward[k]+=self.rewards_dist['GET_CLOSER_CONSTANT']+self.rewards_dist['GET_CLOSER']/(1 + pow(info[f'agent_{k}']['man_dist'],1))
             else:
-                reward[k]+=GET_FARTHER
+                reward[k]+=self.rewards_dist['GET_FARTHER_CONSTANT'] + self.rewards_dist['GET_FARTHER'] * (1 + pow(info[f'agent_{k}']['man_dist'],1))
 
-            #if not info[f'agent_{k}']['done'] and truncated:
-                #reward[k] -=info['timer']
 
             # --- reward for arriving at the goal --- #
             if pos==t_pos and agent_done:
-                reward[k] += GOAL
+                reward[k] += self.rewards_dist['GOAL']
 
             #reward[k] = np.clip(reward[k],-1,1)
-            
+            #reward[k] = np.tanh(reward[k])
+
+            # -- normalize the rewards compared to the size of the maze -- #
+            reward[k] = reward[k]/(info['max_pos']+1) * 4
 
             self.cum_rewards[k] += reward[k]
         
@@ -95,7 +145,7 @@ class maze_runner_rewards(Wrapper):
         for a in range(info['n_agents']):
             self.agents_dist[f'agent_{a}'] = deque([info[f'agent_{a}']['man_dist']],maxlen=2)
             self.agents_recent_loc[f'agent_{a}'] = deque([info[f'agent_{a}']['pos']],maxlen=3)
-            self.agents_past[f'agent_{a}'] = {info[f'agent_{a}']['pos']}
+            self.agents_past[f'agent_{a}'] = {info[f'agent_{a}']['pos'] : 1}
             self.cum_rewards.append(0)
         
 

@@ -14,11 +14,10 @@ class Maze_dataset(Dataset):
                     - 'wilson': wilson's algorithm
                     - 'percolation': percolation maze generation
                     - 'prim': """
+        self.shape = shape
         self.maze_type = maze_type
         self.mazes = [self.generate_maze(shape) for _ in range(num_mazes)]
-        LatticeMazeGenerators.gen_percolation
-        LatticeMazeGenerators.gen_wilson
-        LatticeMazeGenerators.gen_prim
+        
 
     def generate_maze(self,shape):
         """Generate mazes based on the type of maze generation

@@ -61,6 +61,7 @@ class PERBuffer:
     def __init__(self, capacity, alpha=0.6, beta=0.4, beta_increment=0.001):
         self.tree = SumTree(capacity)
         self.alpha = alpha  # Prioritization factor
+        self.start_beta = beta
         self.beta = beta  # Importance sampling correction factor
         self.beta_increment = beta_increment  # How fast beta increases
         self.epsilon = 1e-5  # Small value to avoid zero priority
@@ -91,6 +92,10 @@ class PERBuffer:
         #batch = [(idx, exp, p, w) for (idx, exp, p), w in zip(batch, is_weights)]
         
         return batch, is_weights
+    
+    def step(self,frame,n_frames):
+        linear_decay = self.start_beta*((n_frames - frame)/n_frames) + 1.0*(frame/n_frames)
+        self.beta = min(1.0,linear_decay)
     
     def update_priority(self, idx, td_error):
         priority = (abs(td_error) + self.epsilon) ** self.alpha

@@ -16,16 +16,22 @@ import DQN.models as models
 import json
 import Maze_env
 
-
-    
+# -- baseline rewards -- #
+baseline_rw = rw.reward_dist()
 
 
 class maze_agents:
-    def __init__(self,maze_model,vision,action_type = 'full', **kwargs):
+    def __init__(self,maze_model,vision,
+                 action_type = 'full',
+                 rewards_dist = baseline_rw,
+                   **kwargs):
         """Initalize the base agent class, put the vision length to give the agents"""
 
         # -- vision of the agent -- #
         self.vision = vision
+
+        # -- rewards distribution -- #
+        self.rewards_dist = rewards_dist
 
         # -- shape of the CNN input -- #
         self.CNN_shape = (3,2*vision + 1, 2*vision + 1)
@@ -39,6 +45,7 @@ class maze_agents:
         self.action_type = action_type
 
         # -- initalize the maze model -- #
+        self.maze_model = maze_model
         self.Q_fun = maze_model(self.CNN_shape,self.n_actions)
         self.Q_fun.to(device.DEVICE)
         
@@ -66,7 +73,23 @@ class maze_agents:
         vision = loaded_model_hp['vision']
         action_type = loaded_model_hp['action_type']
         param_load = torch.load(os.path.join(fd, f'agent.pth'))
-        return cls(models.metadata[name],vision,action_type,load = param_load)
+
+        # -- load reward distribution -- #
+        with open(os.path.join(fd,'reward_distribution.json'),'r') as g:
+            rewards = json.load(g)
+        rewards_dist = rw.reward_dist(**rewards)
+        result = cls(models.metadata[name],
+                     vision,
+                     action_type,
+                     load = param_load,
+                     rewards_dist = rewards_dist)
+        return result
+    
+    def copy(self):
+        copyAgent = maze_agents(self.maze_model,self.vision,self.action_type,
+                                self.rewards_dist, load = self.Q_fun.state_dict())
+        return copyAgent
+        
 
     def transform_local_to_nn(self,local_state):
         """Used to transform information in enviroment numpy to Q-network pytorch,
@@ -99,10 +122,10 @@ class maze_agents:
 
     def add_wrappers(self, env):
         """Add wrappers into the enviroment"""
-        env = rw.maze_runner_rewards(env)
+        env = rw.maze_runner_rewards(env, rewards_dist = self.rewards_dist)
         return env
 
-    def get_action(self,env,num_agents,state,epsilon=0):
+    def get_action(self,env,num_agents,state,epsilon=0.0):
         """ Get the actions from each agent from the state
 
             env: the environment the agent is in.
@@ -113,18 +136,22 @@ class maze_agents:
 
             epsilon: the probability of taking a random action vs 1-epsilon to take 
                     a Q-network action"""
+        
         actions = []
         for a in range(num_agents):
-            if np.random.random()<epsilon:
-                actions.append(int(env.action_space.sample()))
-            else:
-                
-                local_state_tensor = self.transform_local_to_nn(state[f'local_{a}'])
-                global_state_tensor = self.transform_global_to_nn(state[f'global_{a}'])
-                q_values = self.Q_fun(local_state_tensor,global_state_tensor)
-                actions.append(int(q_values.argmax().item()))
-                
+            actions.append(self.get_single_agent_action(env,state,a,epsilon))       
         return actions
+    
+    def get_single_agent_action(self,env,state,a,epsilon):
+        if np.random.random()<epsilon:
+            action = int(env.action_space.sample())
+        else:
+            
+            local_state_tensor = self.transform_local_to_nn(state[f'local_{a}'])
+            global_state_tensor = self.transform_global_to_nn(state[f'global_{a}'])
+            q_values = self.Q_fun(local_state_tensor,global_state_tensor)
+            action=int(q_values.argmax().item())
+        return action
     
     def compute_action_probs(self,local_state,global_state):
         """ Compute the probabilities of each action from the state using Q-Net"""
@@ -155,7 +182,8 @@ class maze_agents:
         return state, actions, next_state, reward, terminated
     
     def run_agent(self,maze, len_game = 50, n_episodes = 1, num_agents = 1,epsilon = 0, sample_prob = False,
-                  agents_pos=None, targets_pos = None):
+                  agents_pos=None, targets_pos = None, start_dist = None,
+                  output_frame_rewards = False):
         """Run the agent in the enviroment that is human readable using pygame.
 
             maze: a maze from the maze_dataset, needs the connection_list,
@@ -177,13 +205,14 @@ class maze_agents:
         
         # -- save agents perspective for viewing later -- #
         agents_per = {}
-        
+        self.Q_fun.eval()
         with torch.no_grad():
             # -- make environment -- #
             env = gym.make('Maze_env/MazeRunner-v0',len_game = len_game,num_agents=num_agents,vision_len=self.vision,maze=maze,
                            render_mode='human',obs_type = 'spatial',
                            action_type = self.action_type, 
-                           agents_pos = agents_pos, targets_pos = targets_pos)
+                           agents_pos = agents_pos, targets_pos = targets_pos,
+                           start_dist = start_dist)
 
             env = self.add_wrappers(env)
 
@@ -196,6 +225,7 @@ class maze_agents:
                 done = False
 
                 cum_reward = 0
+                frame = 0
                 # Play
                 while not done:
                     # -- get actions -- #
@@ -210,6 +240,10 @@ class maze_agents:
                     if sample_prob == True:
                         pic = self.compute_action_probs(next_obs['local_0'])
                         print(pic.numpy())
+                    # -- output frame rewards -- # 
+                    if output_frame_rewards:
+                        frame+=1
+                        print(f'Frame: {frame} reward: {reward}')
                     # -- done -- #
                     done = terminated or truncated
                     obs = next_obs
@@ -220,7 +254,8 @@ class maze_agents:
 
     def test_agent(self,maze_dataset, n_episodes,len_game = 50,
                     num_agents = 1,
-                  agents_pos=None, targets_pos = None):
+                  agents_pos=None, targets_pos = None,
+                  start_dist = None):
         """This evaluates how good the agent is at random maze levels
             Returns the ratio completed episodes/total number of episodes""" 
         total_completed = 0
@@ -229,13 +264,15 @@ class maze_agents:
         for i in range(len(maze_dataset)):
             id_x = random.choice(range(len(maze_dataset)))
             maze = maze_dataset[id_x]
+            self.Q_fun.eval()
             with torch.no_grad():
                 # -- make environment -- #
                 env = gym.make('Maze_env/MazeRunner-v0',len_game = len_game,
                             num_agents=num_agents,vision_len=self.vision,maze=maze,
                             render_mode='rgb_array',obs_type = 'spatial',
                             action_type = self.action_type, 
-                            agents_pos = agents_pos, targets_pos = targets_pos)
+                            agents_pos = agents_pos, targets_pos = targets_pos,
+                            start_dist = start_dist)
 
                 env = self.add_wrappers(env)
 
@@ -262,7 +299,7 @@ class maze_agents:
         return total_completed/n_episodes
                
 
-    def animate_last_replay(self,agent_id,name):
+    def animate_last_replay(self,agent_id,name, save = False):
         """Takes the last run_agent and saved perspectives of the agents and 
             returns a animation of it
             agent_id: gives the id of the agent for the perspective we want
@@ -271,13 +308,13 @@ class maze_agents:
         seq_anim = self.__last_replay_agents_perspective__[f'agent_{agent_id}']
         html, ani = create_animation(seq_anim)
         display(html)
-
-        fd = os.getcwd()
-        fd = os.path.join(fd, 'media')
-        if os.path.exists(fd) == False:
-            os.mkdir(fd)
-        fd = os.path.join(fd,f'{name}.gif')
-        ani.save(fd, writer='pillow')
+        if save:
+            fd = os.getcwd()
+            fd = os.path.join(fd, 'media')
+            if os.path.exists(fd) == False:
+                os.mkdir(fd)
+            fd = os.path.join(fd,f'{name}.gif')
+            ani.save(fd, writer='pillow')
                   
 
     def save(self,name):
@@ -304,13 +341,14 @@ class maze_agents:
             json.dump(model_param, f, indent=4)
 
         reward_structure = {
-            'GOAL' : rw.GOAL,
-            'SEE_GOAL': rw.SEE_GOAL,
-            'DONT_SEE_GOAL': rw.DONT_SEE_GOAL,
-            'NEW_PLACE' : rw.NEW_PLACE,
-            'OLD_PLACE' : rw.OLD_PLACE,
-            'GET_CLOSER': rw.GET_CLOSER,
-            'GET_FARTHER': rw.GET_FARTHER,
+            'GOAL' : self.rewards_dist['GOAL'],
+            'SEE_GOAL': self.rewards_dist['SEE_GOAL'],
+            'DONT_SEE_GOAL': self.rewards_dist['DONT_SEE_GOAL'],
+            'NEW_PLACE' : self.rewards_dist['NEW_PLACE'],
+            'OLD_PLACE' : self.rewards_dist['OLD_PLACE'],
+            'GET_CLOSER': self.rewards_dist['GET_CLOSER'],
+            'GET_FARTHER': self.rewards_dist['GET_FARTHER'],
+            'DIST': self.rewards_dist['DIST'],
             'WALL' : Maze_env.env.mazes.WALL
         }
         # -- save reward distribution -- #
