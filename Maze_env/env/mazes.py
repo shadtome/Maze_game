@@ -20,7 +20,7 @@ import torch
 
 
 # -- Reward parameters -- #
-DO_ACTION = -0.004
+DO_ACTION = -0.01
 WALL = -0.75
 STAY = 0.0
 

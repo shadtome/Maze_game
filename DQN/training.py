@@ -431,13 +431,18 @@ expected_q = reward + gamma * target_q_values * (1 - done)
                     if frame % 10000 ==0:
                         print(f'frame {frame} with loss {loss}')
                         print(f'Epsilon: {self.epsilonScheduler.epsilon}')
+                        print(f'Epsilon Level: {self.epsilonScheduler.cur_level}')
                         print(f'Start dist: {self.start_dist}')
                         
 
                 # --- decay the epsilon greedy policy --- #   
                 #self.decay_epsilon(frame)
                 if update_start:
-                    self.epsilonScheduler.step()
+                    if self.curriculum :
+                        self.start_dist = self.epsilonScheduler.step()
+                        #self.epsilonScheduler.step()
+                    else:
+                        self.epsilonScheduler.step()
                 self.replay_buffer.step(frame,self.n_frames)
 
     def get_action(self,env,state,cur_dist=None):
@@ -562,7 +567,7 @@ expected_q = reward + gamma * target_q_values * (1 - done)
                     cum_reward[a] += reward[a]
                     
                     # -- save agents dist -- #
-                    if self.curriculum and False:
+                    if self.curriculum:
                         cur_dist[a] = info[f'agent_{a}']['man_dist']
 
                 # --- record agent's rewards --- #
@@ -596,11 +601,8 @@ expected_q = reward + gamma * target_q_values * (1 - done)
                                                     len_game = 15,
                                                     start_dist=self.start_dist)
                 print(f'Current Score: {success_rate}')
-                # -- increase the difficulty -- #
-                if self.curriculum :
-                    self.start_dist = self.epsilonScheduler.step()
                 
-                if self.epsilonScheduler.check_threshold(success_rate):
+                if self.epsilonScheduler.check_threshold(success_rate) and False:
                     self.epsilonScheduler.reset(start_epsilon = 0.5)
 
                 if success_rate > self.best_score:

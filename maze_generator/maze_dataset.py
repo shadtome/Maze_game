@@ -5,7 +5,7 @@ from maze_dataset.plotting import MazePlot
 import matplotlib.pyplot as plt
 
 class Maze_dataset(Dataset):
-    def __init__(self,num_mazes,shape = (10,10),maze_type = 'dfs'):
+    def __init__(self,num_mazes,shape = (10,10),maze_type = 'dfs', **kwargs):
         """Used to generate mazes
             num_mazes: the number of mazes to generate
             shape: shape of the maze (h,w)
@@ -16,10 +16,10 @@ class Maze_dataset(Dataset):
                     - 'prim': """
         self.shape = shape
         self.maze_type = maze_type
-        self.mazes = [self.generate_maze(shape) for _ in range(num_mazes)]
+        self.mazes = [self.generate_maze(shape, **kwargs) for _ in range(num_mazes)]
         
 
-    def generate_maze(self,shape):
+    def generate_maze(self,shape, **kwargs):
         """Generate mazes based on the type of maze generation
         shape: shape of the maze (h,w)"""
         if self.maze_type == 'dfs':
