@@ -16,6 +16,7 @@ import json
 import seaborn as sns
 import DQN.buffers as buffers
 import DQN.schedulers as schedulers
+import Maze_env.wrappers.stickAction as sA
 
 
 
@@ -133,7 +134,7 @@ class Maze_Training:
                                                                  decay_total=decay_total,
                                                                  threshold=threshold,
                                                                  n_levels=max_dist)
-            self.start_dist = max_dist                                               
+            self.start_dist = 1                                             
         else:
             self.epsilonScheduler = schedulers.epsilonDecayScheduler(start_epsilon=start_epsilon,
                                                                  end_epsilon=final_epsilon,
@@ -175,8 +176,11 @@ class Maze_Training:
             self.td_errors[a] = []
 
         # -- save the best agent -- #
-        self.best_agent = None
+        self.best_agent = self.agents
         self.best_score = 0.0
+
+        self.epsilon_upgrades = []
+        self.distance_upgrades = []
         
 
 
@@ -394,6 +398,7 @@ expected_q = reward + gamma * target_q_values * (1 - done)
         # --- environment wrappers --- #
         #env = gym.wrappers.RecordEpisodeStatistics(env,buffer_length=n_episodes)
         env = gym.wrappers.RecordEpisodeStatistics(env)
+        env = sA.maze_runner_stickyActions(env,self.n_agents,sticky_prob=0.25)
         env = self.agents.add_wrappers(env)
 
         return env
@@ -439,8 +444,12 @@ expected_q = reward + gamma * target_q_values * (1 - done)
                 #self.decay_epsilon(frame)
                 if update_start:
                     if self.curriculum :
-                        self.start_dist = self.epsilonScheduler.step()
-                        #self.epsilonScheduler.step()
+                        updated = self.epsilonScheduler.step()
+                        if updated['dist']:
+                            self.start_dist+=1
+                            self.distance_upgrades.append(frame)
+                        if updated['level']:
+                            self.epsilon_upgrades.append(frame)
                     else:
                         self.epsilonScheduler.step()
                 self.replay_buffer.step(frame,self.n_frames)
@@ -677,6 +686,16 @@ expected_q = reward + gamma * target_q_values * (1 - done)
         sns.violinplot(data=df, x="Action", y="Q-Value",  ax = axe[1][1])
 
 
+        # -- if curriculum was used, add in extra features to the pictures -- #
+        if self.curriculum:
+            for frame in self.epsilon_upgrades:
+                axe[0][0].axvline(x=frame,linestyle = 'dashed', color = 'blue',alpha=0.8,label = 'epsilon upgraded')
+                axe[1][0].axvline(x=frame,linestyle = 'dashed', color = 'blue',alpha=0.8,label = 'epsilon upgraded')
+                
+            for frame in self.distance_upgrades:
+                axe[0][0].axvline(x = frame,linestyle = 'dashed',color = 'red',alpha=0.8,label = 'distance upgraded')
+                axe[1][0].axvline(x = frame,linestyle = 'dashed',color = 'red',alpha=0.8,label = 'distance upgraded')
+
         for a in range(2,self.n_agents+2):
             # Lets find a moving average of the scores
               # Adjust based on how much smoothing you want
@@ -697,6 +716,10 @@ expected_q = reward + gamma * target_q_values * (1 - done)
             axe[a][1].set_xlabel('frame')
             axe[a][1].set_ylabel('td error')
             axe[a][1].set_title('error between target and policy')
+
+
+        
+
 
         display(fig)
 
@@ -802,6 +825,7 @@ expected_q = reward + gamma * target_q_values * (1 - done)
 
         with open(os.path.join(fd_original,'hyperparameters.json'),'w') as f:
             json.dump(param,f,indent=4)
+        
         with open(os.path.join(fd_best,'hyperparameters.json'),'w') as f:
             json.dump(param,f,indent=4)
         

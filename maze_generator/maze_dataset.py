@@ -11,9 +11,19 @@ class Maze_dataset(Dataset):
             shape: shape of the maze (h,w)
             type: the type of maze generation.
                     - 'dfs': depth first search
+                        - lattice_dim
+                        - accessible_cells
+                        - max_tree_depth
+                        - do_forks
                     - 'wilson': wilson's algorithm
                     - 'percolation': percolation maze generation
-                    - 'prim': """
+                        - p
+                        - lattice_dim 
+                    - 'prim': 
+                        - lattice_dim
+                        - accessible_cells
+                        - max_tree_depth
+                        - do_forks"""
         self.shape = shape
         self.maze_type = maze_type
         self.mazes = [self.generate_maze(shape, **kwargs) for _ in range(num_mazes)]
@@ -29,6 +39,7 @@ class Maze_dataset(Dataset):
                 accessible_cells=None,
                 max_tree_depth=None,
                 start_coord=None,
+                do_forks=True
             )
             return maze
         if self.maze_type == 'wilson':
