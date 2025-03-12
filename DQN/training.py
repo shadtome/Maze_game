@@ -41,7 +41,7 @@ class Maze_Training:
                  beta = 0.4, alpha = 0.6, decay_total = 10000, per = False,
                  agent_pos = None, target_pos = None,
                  curriculum = False, threshold = 0.70, 
-                 smooth = False):
+                 curriculum_alpha = 1.0, curriculum_mu = 1.0):
         """Used to train a deep Q-network for agents exploring a maze.
         name: string used for saving the name and for loading
 
@@ -133,7 +133,9 @@ class Maze_Training:
                                                                  end_epsilon=final_epsilon,
                                                                  decay_total=decay_total,
                                                                  threshold=threshold,
-                                                                 n_levels=max_dist)
+                                                                 n_levels=max_dist,
+                                                                 alpha = curriculum_alpha,
+                                                                 mu = curriculum_mu)
             self.start_dist = 1                                             
         else:
             self.epsilonScheduler = schedulers.epsilonDecayScheduler(start_epsilon=start_epsilon,
@@ -445,8 +447,10 @@ expected_q = reward + gamma * target_q_values * (1 - done)
                 if update_start:
                     if self.curriculum :
                         updated = self.epsilonScheduler.step()
+                        
                         if updated['dist']:
                             self.start_dist+=1
+                            print(f'Increasing Distance to {self.start_dist}')
                             self.distance_upgrades.append(frame)
                         if updated['level']:
                             self.epsilon_upgrades.append(frame)
@@ -820,7 +824,10 @@ expected_q = reward + gamma * target_q_values * (1 - done)
             'decay_total': self.decay_total,
             'per' : self.per,
             'agent_pos' : self.agent_pos,
-            'target_pos' : self.target_pos
+            'target_pos' : self.target_pos,
+            'curriculum': self.curriculum,
+            'curriculum_mu': self.epsilonScheduler.mu,
+            'curriculum_alpha': self.epsilonScheduler.alpha,
         }
 
         with open(os.path.join(fd_original,'hyperparameters.json'),'w') as f:
