@@ -92,7 +92,7 @@ class maze_runner_rewards(Wrapper):
             if pos not in self.agents_past[f'agent_{k}']:
                 self.agents_past[f'agent_{k}'][pos] = 1
                 
-                reward[k] +=self.rewards_dist['NEW_PLACE']
+                reward[k] +=self.rewards_dist['NEW_PLACE']/(1 + pow(info[f'agent_{k}']['man_dist'],1))
             else:
                 # --- punish corresponding to how many times it visited --- #
                 self.agents_past[f'agent_{k}'][pos]+=1
@@ -108,7 +108,7 @@ class maze_runner_rewards(Wrapper):
                 
             if index!=-1:
                 
-                reward[k] += self.rewards_dist['SEE_GOAL']/np.log(2 + index)
+                reward[k] += self.rewards_dist['SEE_GOAL']/(1 + pow(info[f'agent_{k}']['man_dist'],1))
             else:
                
                 reward[k] += self.rewards_dist['DONT_SEE_GOAL']
@@ -131,7 +131,7 @@ class maze_runner_rewards(Wrapper):
             #reward[k] = np.tanh(reward[k])
 
             # -- normalize the rewards compared to the size of the maze -- #
-            reward[k] = reward[k]/(info['max_pos']+1) * 4
+            reward[k] = reward[k]/(info['max_pos']+1)
 
             self.cum_rewards[k] += reward[k]
         

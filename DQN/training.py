@@ -113,8 +113,6 @@ class Maze_Training:
         # file name for saving and loading
         self.name = name
 
-        # -- number of total frames -- #
-        self.n_frames = n_frames
 
         # -- where to stop the epsilon decay policy with respect to number of total frames -- #
         self.decay_stop = int(n_frames*1)
@@ -126,7 +124,7 @@ class Maze_Training:
 
         # --- epsilon-greedy policy scheduler --- #
         self.curriculum = curriculum
-        max_dist = self.mazes.shape[0] + self.mazes.shape[1] - 1
+        max_dist = self.mazes.shape[0] + self.mazes.shape[1] - 2
         if curriculum:
             
             self.epsilonScheduler = schedulers.epsilonDecayScheduler(start_epsilon=start_epsilon,
@@ -144,6 +142,9 @@ class Maze_Training:
                                                                  threshold=threshold,
                                                                  n_levels=1)
             self.start_dist = max_dist
+
+        # -- number of total frames -- #
+        self.n_frames = self.epsilonScheduler.total_time() + int(self.replay_buffer_size*self.replay_buffer_min_perc)
 
         # -- learning rate -- #
         self.lr = lr
@@ -165,6 +166,7 @@ class Maze_Training:
 
         # -- lists for saving the results -- #
         self.losses = []
+        self.scores = []
         self.cum_reward = {}
         self.actions_taken = []
         self.Q_values = {}
@@ -436,7 +438,9 @@ expected_q = reward + gamma * target_q_values * (1 - done)
                     self.scheduler.step()
 
                     if frame % 10000 ==0:
-                        print(f'frame {frame} with loss {loss}')
+                        print(f'frame [{frame}:{self.n_frames}] with loss {loss}')
+                        for param_group in self.optimizer.param_groups:
+                            print(f'Learning rate : {param_group['lr']}')
                         print(f'Epsilon: {self.epsilonScheduler.epsilon}')
                         print(f'Epsilon Level: {self.epsilonScheduler.cur_level}')
                         print(f'Start dist: {self.start_dist}')
@@ -449,11 +453,16 @@ expected_q = reward + gamma * target_q_values * (1 - done)
                         updated = self.epsilonScheduler.step()
                         
                         if updated['dist']:
+                            # -- increase the starting distance -- #
                             self.start_dist+=1
                             print(f'Increasing Distance to {self.start_dist}')
                             self.distance_upgrades.append(frame)
                         if updated['level']:
+                            # -- remember that we upgraded the level -- #
                             self.epsilon_upgrades.append(frame)
+                            # -- scale the learning rate back -- #
+                            for param_group in self.optimizer.param_groups:
+                                param_group['lr']*= np.power(1.01,1)
                     else:
                         self.epsilonScheduler.step()
                 self.replay_buffer.step(frame,self.n_frames)
@@ -614,6 +623,7 @@ expected_q = reward + gamma * target_q_values * (1 - done)
                                                     len_game = 15,
                                                     start_dist=self.start_dist)
                 print(f'Current Score: {success_rate}')
+                self.scores.append([frame,success_rate])
                 
                 if self.epsilonScheduler.check_threshold(success_rate) and False:
                     self.epsilonScheduler.reset(start_epsilon = 0.5)
@@ -679,15 +689,19 @@ expected_q = reward + gamma * target_q_values * (1 - done)
                 data.append({"frame": frame, "Q-Value": q, "Action": action})
 
         df = pd.DataFrame(data)
-
+        
         # Plot using Seaborn
         axe[1][0].cla()
         sns.lineplot(data=df, x="frame", y="Q-Value", hue="Action", ax=axe[1][0], palette="tab10")
 
 
-        # --- boxplot of Q-values --- #
+        # --- line plot of scores --- #
         axe[1][1].cla()
-        sns.violinplot(data=df, x="Action", y="Q-Value",  ax = axe[1][1])
+        scores_data = []
+        for frame, score in self.scores:
+            scores_data.append({'frame': frame, 'score':score})
+        scores_df = pd.DataFrame(scores_data)
+        sns.lineplot(data = scores_df, x ='frame',y = 'score',ax = axe[1][1],palette='tab10')
 
 
         # -- if curriculum was used, add in extra features to the pictures -- #
@@ -695,10 +709,12 @@ expected_q = reward + gamma * target_q_values * (1 - done)
             for frame in self.epsilon_upgrades:
                 axe[0][0].axvline(x=frame,linestyle = 'dashed', color = 'blue',alpha=0.8,label = 'epsilon upgraded')
                 axe[1][0].axvline(x=frame,linestyle = 'dashed', color = 'blue',alpha=0.8,label = 'epsilon upgraded')
+                axe[1][1].axvline(x=frame,linestyle = 'dashed', color = 'blue',alpha=0.8,label = 'epsilon upgraded')
                 
             for frame in self.distance_upgrades:
                 axe[0][0].axvline(x = frame,linestyle = 'dashed',color = 'red',alpha=0.8,label = 'distance upgraded')
                 axe[1][0].axvline(x = frame,linestyle = 'dashed',color = 'red',alpha=0.8,label = 'distance upgraded')
+                axe[1][1].axvline(x = frame,linestyle = 'dashed',color = 'red',alpha=0.8,label = 'distance upgraded')
 
         for a in range(2,self.n_agents+2):
             # Lets find a moving average of the scores
@@ -720,6 +736,15 @@ expected_q = reward + gamma * target_q_values * (1 - done)
             axe[a][1].set_xlabel('frame')
             axe[a][1].set_ylabel('td error')
             axe[a][1].set_title('error between target and policy')
+
+            if self.curriculum:
+                for frame in self.epsilon_upgrades:
+                    axe[a][0].axvline(x=frame,linestyle = 'dashed', color = 'blue',alpha=0.8,label = 'epsilon upgraded')
+                    axe[a][1].axvline(x=frame,linestyle = 'dashed', color = 'blue',alpha=0.8,label = 'epsilon upgraded')
+                    
+                for frame in self.distance_upgrades:
+                    axe[a][0].axvline(x = frame,linestyle = 'dashed',color = 'red',alpha=0.8,label = 'distance upgraded')
+                    axe[a][1].axvline(x = frame,linestyle = 'dashed',color = 'red',alpha=0.8,label = 'distance upgraded')
 
 
         

@@ -55,8 +55,11 @@ class epsilonDecayScheduler:
         decay = self.start_epsilon * np.power(0.99,self.timer[t]*self.decay_rate)
         self.epsilon[t] = max(self.end_epsilon, decay)
 
+    def __mu_rate__(self,l):
+        return np.power(0.99,self.mu_rate*l)
+
     def __inc_mu__(self,l):
-        self.mu = self.mu*np.power(0.99,self.mu_rate*l)
+        self.mu = self.mu*self.__mu_rate__(l)
 
     def step(self):
         upgrades = {'level': False, 'dist':False}
@@ -67,10 +70,10 @@ class epsilonDecayScheduler:
         
         # -- check if the latest epsilon decay level goes down a sufficient level -- #
         # Check if we need to start the next start distance before decaying
-        if self.timer[-1] == self.timer_threshold*self.mu*self.alpha and self.cur_level < self.n_levels:
+        if self.timer[-1] == int(self.timer_threshold*self.mu*self.alpha) and self.cur_level < self.n_levels:
             upgrades['dist']=True
 
-        if self.timer[-1] == self.timer_threshold*self.mu and self.cur_level<self.n_levels:
+        if self.timer[-1] == int(self.timer_threshold*self.mu) and self.cur_level<self.n_levels:
             self.timer.append(0)
             self.epsilon.append(self.start_epsilon)
             self.cur_level +=1
@@ -82,6 +85,22 @@ class epsilonDecayScheduler:
 
     def check_threshold(self,success_rate):
         return success_rate < self.threshold and self.epsilon[-1] == self.end_epsilon
+    
+    def total_time(self):
+        if self.n_levels == 1:
+            return self.decay_total
+        else:
+            if abs(self.mu - 1.0)<0.00001:
+                return 2*self.decay_total + self.timer_threshold
+            else:
+                time = self.timer_threshold
+                time = time * self.mu
+                time = time * (1 - self.__mu_rate__(self.n_levels+1))
+                time = time/(1-self.__mu_rate__(1))
+                time = time + self.decay_total + self.timer_threshold
+                return int(time)
+
+
             
     def reset(self,**kwargs):
         if 'start_epsilon' in kwargs:
