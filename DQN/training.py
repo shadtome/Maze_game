@@ -440,7 +440,7 @@ expected_q = reward + gamma * target_q_values * (1 - done)
                     if frame % 10000 ==0:
                         print(f'frame [{frame}:{self.n_frames}] with loss {loss}')
                         for param_group in self.optimizer.param_groups:
-                            print(f'Learning rate : {param_group['lr']}')
+                            print(f'Learning rate : {param_group["lr"]}')
                         print(f'Epsilon: {self.epsilonScheduler.epsilon}')
                         print(f'Epsilon Level: {self.epsilonScheduler.cur_level}')
                         print(f'Start dist: {self.start_dist}')
