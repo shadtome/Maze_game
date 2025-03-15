@@ -2,20 +2,21 @@ import torch
 import torch.nn as nn
 from torch.utils.data.dataloader import DataLoader
 import gymnasium as gym
-import DQN.agent as agent
+import DQN.agents.basic as basic
 from collections import deque
 import numpy as np
 import random
 import matplotlib.pyplot as plt
 from IPython.display import display, clear_output
-from torch.optim.lr_scheduler import StepLR
+from DQN.schedulers.learning_rate.basic import BasicHeadLR
 import os
 import device
 import pandas as pd
 import json
 import seaborn as sns
 import DQN.buffers as buffers
-import DQN.schedulers as schedulers
+from DQN.schedulers.epsilon_decay.basic import BaseEpsilonScheduler
+from DQN.schedulers.epsilon_decay.epsilonLevels import GradientEpsilonScheduler
 import Maze_env.wrappers.stickAction as sA
 
 
@@ -27,7 +28,7 @@ RANDOM_STATE = 49
 
 
 
-class Maze_Training:
+class BaseTraining:
     def __init__(self,name,maze_dataset,maze_agent,
                  len_game = 1000,
                  n_agents=1,
@@ -37,29 +38,10 @@ class Maze_Training:
                  target_update = 1000,
                  gamma=0.99,tau = 0.01, batch_size=32, lambda_entropy = 0.01, 
                  lr=1e-3, lr_step_size = 1000, lr_gamma = 0.1, l2_regular = 1e-4,
-                 start_epsilon=1,final_epsilon=0.1,n_frames=50000,
+                 start_epsilon=1,final_epsilon=0.1,
                  beta = 0.4, alpha = 0.6, decay_total = 10000, per = False,
-                 agent_pos = None, target_pos = None,
-                 curriculum = False, threshold = 0.70, 
-                 curriculum_alpha = 1.0, curriculum_mu = 1.0):
-        """Used to train a deep Q-network for agents exploring a maze.
-        name: string used for saving the name and for loading
-
-        maze_dataset: a dataset of mazes that come from the maze_dataset package
-
-        maze_agent: 
-        n_agents: the maze enviroment can run multiple agents and you can accumulate their 
-        experiences together.  But it is aimed to be adversarial in the sense we want to avoid
-        others
-
-        start_epsilon: this is the start epsilon for the greedy policy that is enacted and decreased
-        as the agent gets better.
-
-        final_epsilon: this is the final epsilon that it will decay to.
-
-        n_episodes: number of iterations of the enviroment the agent will go through while training
-
-        update_factor: This how many times the target Will change this"""
+                 agent_pos = None, target_pos = None, **kwargs):
+        """ This class must take a MultiHead maze agent"""
 
 
         # --- Dynamic Hyperparameters --- #
@@ -114,34 +96,16 @@ class Maze_Training:
         self.name = name
 
 
-        # -- where to stop the epsilon decay policy with respect to number of total frames -- #
-        self.decay_stop = int(n_frames*1)
-
         # --- epsilon-greedy policy --- #
-        self.epsilon = start_epsilon
         self.start_epsilon = start_epsilon
         self.final_epsilon = final_epsilon
 
-        # --- epsilon-greedy policy scheduler --- #
-        self.curriculum = curriculum
-        max_dist = self.mazes.shape[0] + self.mazes.shape[1] - 2
-        if curriculum:
-            
-            self.epsilonScheduler = schedulers.epsilonDecayScheduler(start_epsilon=start_epsilon,
-                                                                 end_epsilon=final_epsilon,
-                                                                 decay_total=decay_total,
-                                                                 threshold=threshold,
-                                                                 n_levels=max_dist,
-                                                                 alpha = curriculum_alpha,
-                                                                 mu = curriculum_mu)
-            self.start_dist = 1                                             
-        else:
-            self.epsilonScheduler = schedulers.epsilonDecayScheduler(start_epsilon=start_epsilon,
-                                                                 end_epsilon=final_epsilon,
-                                                                 decay_total=decay_total,
-                                                                 threshold=threshold,
-                                                                 n_levels=1)
-            self.start_dist = max_dist
+        # -- epsilon-greedy policy scheduler -- #
+        self.epsilonScheduler = self.__setup_epsilon_policy__(start_epsilon,
+                                                              final_epsilon,
+                                                              decay_total,
+                                                              **kwargs)
+        print(self.epsilonScheduler)
 
         # -- number of total frames -- #
         self.n_frames = self.epsilonScheduler.total_time() + int(self.replay_buffer_size*self.replay_buffer_min_perc)
@@ -150,19 +114,20 @@ class Maze_Training:
         self.lr = lr
 
         # -- loss function -- #
-        #self.loss_fun = nn.MSELoss()
         self.loss_fun = nn.SmoothL1Loss(reduction='none')  # The Huber loss function, more stable to outliers
 
         # Optimizer
-        #self.optimizer = torch.optim.SGD(self.agents.Q_fun.parameters(),lr=self.lr)
-        self.optimizer = torch.optim.Adam(self.agents.Q_fun.parameters(),lr=self.lr,amsgrad=False,weight_decay = l2_regular)
-        #self.optimizer = torch.optim.RMSprop(self.agents.Q_fun.parameters(),lr=lr)
-
+        self.optimizer = self.__setup_optimizer__(self.agents.Q_fun,self.lr,l2_regular,**kwargs)
+        print('------------------------------')
+        for i, group in enumerate(self.optimizer.param_groups):
+            print(f"Group {i}: Learning rate = {group['lr']}")
         # -- scheduler for the learning rate -- #
-        self.scheduler = StepLR(self.optimizer,
-                                step_size=lr_step_size,
-                                gamma=lr_gamma)
-        
+        self.scheduler = self.__setup_lr_scheduler__(self.optimizer,
+                                                     lr_step_size,
+                                                     lr_gamma,
+                                                    **kwargs)
+        print(self.scheduler)
+                        
 
         # -- lists for saving the results -- #
         self.losses = []
@@ -182,11 +147,23 @@ class Maze_Training:
         # -- save the best agent -- #
         self.best_agent = self.agents
         self.best_score = 0.0
-
-        self.epsilon_upgrades = []
-        self.distance_upgrades = []
         
-
+    def __setup_epsilon_policy__(self,start_epsilon,end_epsilon,decay_total,**kwargs):
+        epsilon_scheduler = BaseEpsilonScheduler(start_epsilon,
+                                                 end_epsilon,
+                                                 decay_total,
+                                                 decayType = 'exponential')
+        return epsilon_scheduler
+    
+    def __setup_optimizer__(self,Q_fun,lr,l2_regular,**kwargs):
+        optimizer = torch.optim.Adam(Q_fun.parameters(),
+                                     lr=lr,
+                                     amsgrad=False,
+                                     weight_decay = l2_regular)
+        return optimizer
+    
+    def __setup_lr_scheduler__(self,optimizer,step_size,gamma, **kwargs):
+        return BasicHeadLR(optimizer,step_size,gamma)
 
     def soft_update(self,tau):
         """ Used to update the current target Q-network by the policy Q-network by a weighted sum:
@@ -199,7 +176,7 @@ class Maze_Training:
         for target_param, policy_param in zip(self.target_Q_net.parameters(),self.agents.Q_fun.parameters()):
             target_param.data.copy_(tau * policy_param.data + (1.0 - tau) * target_param.data)
 
-    def transform(self,local_s,global_s,action,next_local_s,next_global_s,reward,terminated,weight=None,single=False):
+    def transform(self,local_s,global_s,action,next_local_s,next_global_s,reward,terminated,info,weight=None,single=False):
 
         # we need everything to be a tensor to put into our neural network,
         # furthermore, we will need to permute our shape, since gymnasium outputs images
@@ -248,9 +225,9 @@ class Maze_Training:
                 weight_t = torch.tensor(np.array([weight]),dtype=torch.float32,device=device.DEVICE)
             else:
                 weight_t = torch.tensor(np.array(weight),dtype = torch.float32,device = device.DEVICE )
-            return local_st,global_st,action_t,next_local_st,next_global_st,reward_t, terminated_t, weight_t
+            return local_st,global_st,action_t,next_local_st,next_global_st,reward_t, terminated_t,info, weight_t
 
-        return local_st,global_st,action_t,next_local_st,next_global_st,reward_t, terminated_t
+        return local_st,global_st,action_t,next_local_st,next_global_st,reward_t, terminated_t,info
 
 
     def sample_replay(self, batch_size):
@@ -268,9 +245,9 @@ class Maze_Training:
         
         # get the information
 
-        local_state,global_state, action, next_local_state, next_global_state, reward,terminated= zip(*sample)
-        
-        return self.transform(local_state,global_state, action, next_local_state, next_global_state, reward,terminated,weights)
+        local_state,global_state, action, next_local_state, next_global_state, reward,terminated,info= zip(*sample)
+    
+        return self.transform(local_state,global_state, action, next_local_state, next_global_state, reward,terminated,info,weights)
 
     def compute_loss(self,frame):
         """This is to compute the loss between the target Q-network and the policy Q-network.
@@ -282,14 +259,14 @@ class Maze_Training:
                         we want to maximize entropy."""
         
         # --- get a sample of replays of past experiences --- #
-        local_s,global_s, actions,next_local_s,next_global_s, rewards, terminated, weight = self.sample_replay(self.batch_size)
+        local_s,global_s, actions,next_local_s,next_global_s, rewards, terminated,info, weight = self.sample_replay(self.batch_size)
         
         # We need to find $Q^*(s,a) \approx r + \gamma * Q(s', max_{a'} Q'(s',a'))
         # Where (s,a,r,s') is from the replay buffer, Q is the policy net, Q' is the target net
 
 
         # --- get Q(s,a) for each action --- #
-        q_values = self.agents.Q_fun(local_s,global_s)
+        q_values = self.applyPolicyQ_fun(local_s,global_s,info)
 
         avg_q_values = q_values.mean(dim=0).tolist()
         for a in range(self.agents.n_actions):
@@ -297,21 +274,13 @@ class Maze_Training:
         
         # --- pick the Q values corresponding to the picked actions --- #
         selected_q_values = q_values.gather(1,actions.unsqueeze(1)).squeeze()
-        
-        """
-        with torch.no_grad():
-    next_q_values = q_net(next_state)  # Use the online network
-    best_actions = torch.argmax(next_q_values, dim=1)  # Select best actions
-    target_q_values = target_net(next_state).gather(1, best_actions.unsqueeze(1)).squeeze(1)  # Use target network values
-expected_q = reward + gamma * target_q_values * (1 - done)
-"""
 
         with torch.no_grad():
             # --- get next actions where Q(s',a) is maximized --- #
-            next_actions = self.agents.Q_fun(next_local_s, next_global_s).argmax(1, keepdim=True)
+            next_actions = self.applyPolicyQ_fun(next_local_s, next_global_s,info).argmax(1, keepdim=True)
 
             # --- calculate Q'(s',a') where a' is the actions maximies from Q(s',a) above --- #
-            next_q_values = self.target_Q_net(next_local_s,next_global_s).detach().gather(1,next_actions).squeeze(1)
+            next_q_values = self.applyTargetQ_fun(next_local_s,next_global_s,info).detach().gather(1,next_actions).squeeze(1)
             
             # --- calculate the estimator of the Bellmann equation --- #
             target = rewards + self.gamma*next_q_values * (1-terminated.float())
@@ -326,23 +295,25 @@ expected_q = reward + gamma * target_q_values * (1 - done)
 
         # --- compute the entropy of the distribution p(-|s)  --- #
         entropy = -torch.sum(action_probs * torch.log(action_probs + 1e-6),dim=1)
-
-        #if frame% 10000 == 0:
-        #    print(f"Max Q-value: {selected_q_values.max().item()}, Max Target Values {target.max().item()}, minus: {(target- selected_q_values).max().item()}")
-        #    print(f'Max Entropy: {entropy.max().item()}, Min Entropy: {entropy.min().item()}')
         
         # --- we want to maximize entropy to make it less deterministic, so we take the negative --- #
         loss -=self.lambda_entropy * entropy.mean()
         
         return loss, action_probs
     
-    def td_error(self,local_s,global_s,action,n_local_s,n_global_s,reward,terminated):
+    def applyPolicyQ_fun(self,local_s,global_s,info):
+        return self.agents.Q_fun(local_s,global_s)
+    
+    def applyTargetQ_fun(self,local_s,global_s,info):
+        return self.target_Q_net(local_s,global_s)
+    
+    def td_error(self,local_s,global_s,action,n_local_s,n_global_s,reward,terminated,info):
         """Compute the td-error:
             r + gamma*Q'(s',argmax_{a'}Q(s'a')) - Q(s,a)"""
-        local_s,global_s,action,n_local_s,n_global_s,reward,terminated = self.transform(local_s,global_s,action,n_local_s,n_global_s,reward,terminated,single=True)
+        local_s,global_s,action,n_local_s,n_global_s,reward,terminated,info = self.transform(local_s,global_s,action,n_local_s,n_global_s,reward,terminated,info,single=True)
 
         # --- get Q(s,a) for each action --- #
-        q_values = self.agents.Q_fun(local_s,global_s)
+        q_values = self.applyPolicyQ_fun(local_s,global_s,info)
 
 
         # --- pick the Q values corresponding to the picked actions --- #
@@ -350,10 +321,10 @@ expected_q = reward + gamma * target_q_values * (1 - done)
 
         with torch.no_grad():
             # --- get next actions where Q(s',a) is maximized --- #
-            next_actions = self.agents.Q_fun(n_local_s, n_global_s).argmax(1, keepdim=True).detach()
+            next_actions = self.applyPolicyQ_fun(n_local_s, n_global_s,info).argmax(1, keepdim=True).detach()
 
             # --- calculate Q'(s',a') where a' is the actions maximies from Q(s',a) above --- #
-            next_q_values = self.target_Q_net(n_local_s,n_global_s).gather(1,next_actions).squeeze(1)
+            next_q_values = self.applyTargetQ_fun(n_local_s,n_global_s,info).gather(1,next_actions).squeeze(1)
             
             # --- calculate the estimator of the Bellmann equation --- #
             target = reward + self.gamma*next_q_values * (1-terminated.float())
@@ -362,42 +333,31 @@ expected_q = reward + gamma * target_q_values * (1 - done)
         
         return td_e.detach().cpu().numpy()
     
-    def append_to_RB(self,local_s,global_s,action,n_local_s,n_global_s,reward,terminated,agent_id):
+    def append_to_RB(self,local_s,global_s,action,n_local_s,n_global_s,reward,terminated,info,agent_id):
         """Append the experience to the replay buffer depending on the type of buffer"""
 
-        td_e = self.td_error(local_s,global_s,action,n_local_s,n_global_s,reward,terminated)
+        td_e = self.td_error(local_s,global_s,action,n_local_s,n_global_s,reward,terminated,info)
         self.td_errors[agent_id].append(td_e)
 
         if self.per:
             self.replay_buffer.add((local_s,global_s,action,
                                     n_local_s,n_global_s,
-                                    reward,terminated),td_e)
+                                    reward,terminated,info),td_e)
         else:
             self.replay_buffer.append([local_s,global_s,action,
                                             n_local_s,n_global_s,
-                                            reward,terminated])
+                                            reward,terminated,info])
 
 
-    
-    def decay_epsilon(self,frame):
-        """ Used to decay the epsilon down for the greedy policy"""
-        start_epsilon = self.start_epsilon
-        final_epsilon = self.final_epsilon
-       
-        #self.epsilon = max(final_epsilon,start_epsilon + ((final_epsilon-start_epsilon)/n_episodes)*episode )
-        #self.epsilon = max(final_epsilon,self.epsilon * (0.9995))
-        # Linear decline of the epsilon decay
-        linear_decay = start_epsilon*((self.decay_stop - frame)/self.decay_stop) + final_epsilon*(frame/self.decay_stop)
-        self.epsilon = max(final_epsilon,linear_decay)
-
-    def setup_environment(self, maze, agent_pos, target_pos,start_dist):
+    def setup_environment(self, maze, agent_pos, target_pos,**kwargs):
         env = gym.make('Maze_env/MazeRunner-v0',len_game= self.len_game,
                         num_agents=self.n_agents,vision_len=self.agents.vision
                             ,maze=maze, render_mode='rgb_array',obs_type = 'spatial',
                             action_type=self.agents.action_type,
                             agents_pos = agent_pos, 
                             targets_pos = target_pos,
-                            start_dist = self.start_dist)
+                            dist_paradigm = self.agents.dist_paradigm,
+                            **kwargs)
         
         # --- environment wrappers --- #
         #env = gym.wrappers.RecordEpisodeStatistics(env,buffer_length=n_episodes)
@@ -406,6 +366,13 @@ expected_q = reward + gamma * target_q_values * (1 - done)
         env = self.agents.add_wrappers(env)
 
         return env
+    
+    def reset_environment(self,env,**kwargs):
+        state,info = env.reset(options = kwargs)
+        return state, info
+    
+    def __update_epsilon_scheduler__(self,frame):
+        self.epsilonScheduler.step()
     
     def update_networks(self,update_start,frame):
                 # --- soft update of target Q-net --- #
@@ -438,64 +405,68 @@ expected_q = reward + gamma * target_q_values * (1 - done)
                     self.scheduler.step()
 
                     if frame % 10000 ==0:
+                        print(f'----------------------------------\n')
                         print(f'frame [{frame}:{self.n_frames}] with loss {loss}')
                         for param_group in self.optimizer.param_groups:
                             print(f'Learning rate : {param_group["lr"]}')
                         print(f'Epsilon: {self.epsilonScheduler.epsilon}')
-                        print(f'Epsilon Level: {self.epsilonScheduler.cur_level}')
-                        print(f'Start dist: {self.start_dist}')
-                        
-
-                # --- decay the epsilon greedy policy --- #   
-                #self.decay_epsilon(frame)
                 if update_start:
-                    if self.curriculum :
-                        updated = self.epsilonScheduler.step()
-                        
-                        if updated['dist']:
-                            # -- increase the starting distance -- #
-                            self.start_dist+=1
-                            print(f'Increasing Distance to {self.start_dist}')
-                            self.distance_upgrades.append(frame)
-                        if updated['level']:
-                            # -- remember that we upgraded the level -- #
-                            self.epsilon_upgrades.append(frame)
-                            # -- scale the learning rate back -- #
-                            for param_group in self.optimizer.param_groups:
-                                param_group['lr']*= np.power(1.01,1)
-                    else:
-                        self.epsilonScheduler.step()
+                    self.__update_epsilon_scheduler__(frame)    
                 self.replay_buffer.step(frame,self.n_frames)
 
-    def get_action(self,env,state,cur_dist=None):
+    def get_action(self,env,state,info):
 
         # -- levels of the epsilon -- #
         epsilon = self.epsilonScheduler.epsilon
         actions = []
         # --- get action --- #
         for a in range(self.n_agents):
-            dist_epsilon = 1.0
-            if self.curriculum:
-                
-                if cur_dist[a]<=self.epsilonScheduler.cur_level:
-                    dist_epsilon = epsilon[cur_dist[a]-1]  
-            else:
-                dist_epsilon = epsilon[0]
             
             actions.append(self.agents.get_single_agent_action(
                     env = env,
                     state=state,
                     a=a,
-                    epsilon = dist_epsilon
+                    info = info,
+                    epsilon = epsilon
                 ))
 
         # --- save actions for results --- #
         self.actions_taken.append(actions)
 
         return actions
+    
+    def test_success_rate(self,frame,**kwargs):
+    
+        success_rate = self.agents.test_agent(self.mazes,
+                                                    n_episodes = 500,
+                                                    num_agents = self.n_agents,
+                                                    len_game = 15,**kwargs)
+        print(f'Current Score: {success_rate}')
+        self.scores.append([frame,success_rate])
 
+        if success_rate > self.best_score:
+            self.best_agent = self.agents.copy()
+            self.best_score = success_rate
+        stop_training = False
+        if success_rate >=0.99:
+            print(f'Agent has gotten to success rate {success_rate}.  Stopping training')
+            stop_training=True
 
-    def train(self, test_agent = False, peak = False, uniform_loc = False):
+        return stop_training
+    
+    def in_training_test(self,maze, **kwargs):
+        self.agents.run_agent(maze,
+                                len_game = 15,
+                                n_episodes = 5,
+                                num_agents = self.n_agents,
+                                epsilon=0,
+                                agents_pos = self.agent_pos,
+                                targets_pos = self.target_pos,
+                                **kwargs)
+        
+    
+
+    def train(self, test_agent = False, peak = False):
         """ Train the agents in maze runner
             test_agent: outputs a test of the agent to the user"""
 
@@ -507,28 +478,10 @@ expected_q = reward + gamma * target_q_values * (1 - done)
         random_index = random.randint(0,len(self.mazes)-1)
         maze = self.mazes[random_index]
 
-        # -- uniform training parameter -- #
-        uniform_training = False
-
-
-        # --- this is used to make sure that the agent goes through every scenario --- #
-        if uniform_loc and self.agent_pos is None and self.target_pos is None:
-            total_spots = self.mazes.shape[0]*self.mazes.shape[1]
-            uniform_training = True
-
-            # -- make the sequence of agent and target positions -- #
-            spots = [(i,j) for i in range(total_spots) for j in range(total_spots) if i!=j]
-            se = 0
-
-            # --- maze environment --- #
-            env = self.setup_environment(maze,None,None,None)
-
-        else:
-            # --- maze environment --- #
-            env = self.setup_environment(maze,
-                                         self.agent_pos,
-                                         self.target_pos,
-                                         start_dist = self.start_dist)
+        # --- maze environment --- #
+        env = self.setup_environment(maze,
+                                        self.agent_pos,
+                                        self.target_pos)
         
         self.agents.Q_fun.train()
         frame = 0
@@ -543,39 +496,19 @@ expected_q = reward + gamma * target_q_values * (1 - done)
                 random_index = random.randint(0,len(self.mazes)-1)
                 maze = self.mazes[random_index]
 
-            # --- reset the environment --- #
-            if uniform_training:
-                state,info = env.reset(options = {'new_maze': maze,
-                                                  'agent_pos': [spots[se][0]],
-                                                  'target_pos': [spots[se][1]],
-                                                })
-                done = False
-                if se < len(spots)-1:
-                    se+=1
-                else:
-                    se = 0
-            else:
-                state,info = env.reset(options = {'new_maze': maze,
-                                                  'start_dist':self.start_dist})
-                done = False
+            state,info = self.reset_environment(env,new_maze = maze)
+            done = False
 
-            if self.curriculum:
-                # -- current position -- #
-                cur_dist = []
-                for a in range(self.n_agents):
-                    cur_dist.append(info[f'agent_{a}']['man_dist'])
-            else:
-                cur_dist = None
             # --- cumulitive episode reward --- #
             cum_reward = [0 for _ in range(self.n_agents)]
 
             # --- start episode --- #
             while not done:
                  # -- get action -- #
-                action = self.get_action(env,state, cur_dist)
+                action = self.get_action(env,state,info)
 
                 # --- get next state and rewards from this action --- #
-                next_state, reward, terminated, truncated, info = env.step(action)
+                next_state, reward, terminated, truncated, next_info = env.step(action)
                 
                 # --- save each of the agents state, rewards, ect.. --- #
                 for a in range(self.n_agents):
@@ -583,21 +516,17 @@ expected_q = reward + gamma * target_q_values * (1 - done)
                     # --- add experience to replay buffer --- #
                     self.append_to_RB(state[f'local_{a}'],state[f'global_{a}'],action[a],
                                             next_state[f'local_{a}'],next_state[f'global_{a}'],
-                                            reward[a],terminated,a)
+                                            reward[a],terminated,next_info[f'agent_{a}'],a)
                     
                     # --- accumulate rewards --- #
                     cum_reward[a] += reward[a]
                     
-                    # -- save agents dist -- #
-                    if self.curriculum:
-                        cur_dist[a] = info[f'agent_{a}']['man_dist']
-
-                # --- record agent's rewards --- #
-                for a in range(self.n_agents):
+                    # --- record agent's rewards --- #
                     self.cum_reward[f'agent_{a}'].append(cum_reward[a])
-
+                    
                 # -- next state --- #
                 state = next_state
+                info = next_info
 
                 # --- processes if episode is done --- #
                 done = truncated or terminated
@@ -617,35 +546,12 @@ expected_q = reward + gamma * target_q_values * (1 - done)
 
             # -- test how well the agent is doing -- #
             if start_updating and ep % 500 == 0:
-                success_rate = self.agents.test_agent(self.mazes,
-                                                    n_episodes = 500,
-                                                    num_agents = self.n_agents,
-                                                    len_game = 15,
-                                                    start_dist=self.start_dist)
-                print(f'Current Score: {success_rate}')
-                self.scores.append([frame,success_rate])
-                
-                if self.epsilonScheduler.check_threshold(success_rate) and False:
-                    self.epsilonScheduler.reset(start_epsilon = 0.5)
-
-                if success_rate > self.best_score:
-                    self.best_agent = self.agents.copy()
-                    self.best_score = success_rate
-
-                if success_rate >=0.99:
-                    print(f'Agent has gotten to success rate {success_rate}.  Stopping training')
-                    stop_training=True
+                stop_training = self.test_success_rate(frame)
 
             # -- here we have our during training functions -- #
             if test_agent and start_updating and ep % 1000 == 0:
-                self.agents.run_agent(maze,
-                                      len_game = 15,
-                                      n_episodes = 5,
-                                      num_agents = self.n_agents,
-                                      epsilon=0,
-                                      agents_pos = self.agent_pos,
-                                      targets_pos = self.target_pos,
-                                      start_dist = self.epsilonScheduler.cur_level) 
+                self.in_training_test(maze) 
+
             # -- update the plots -- #
             if peak and ep % 500 == 0 and start_updating:
                 # Update the plot
@@ -703,19 +609,6 @@ expected_q = reward + gamma * target_q_values * (1 - done)
         scores_df = pd.DataFrame(scores_data)
         sns.lineplot(data = scores_df, x ='frame',y = 'score',ax = axe[1][1],palette='tab10')
 
-
-        # -- if curriculum was used, add in extra features to the pictures -- #
-        if self.curriculum:
-            for frame in self.epsilon_upgrades:
-                axe[0][0].axvline(x=frame,linestyle = 'dashed', color = 'blue',alpha=0.8,label = 'epsilon upgraded')
-                axe[1][0].axvline(x=frame,linestyle = 'dashed', color = 'blue',alpha=0.8,label = 'epsilon upgraded')
-                axe[1][1].axvline(x=frame,linestyle = 'dashed', color = 'blue',alpha=0.8,label = 'epsilon upgraded')
-                
-            for frame in self.distance_upgrades:
-                axe[0][0].axvline(x = frame,linestyle = 'dashed',color = 'red',alpha=0.8,label = 'distance upgraded')
-                axe[1][0].axvline(x = frame,linestyle = 'dashed',color = 'red',alpha=0.8,label = 'distance upgraded')
-                axe[1][1].axvline(x = frame,linestyle = 'dashed',color = 'red',alpha=0.8,label = 'distance upgraded')
-
         for a in range(2,self.n_agents+2):
             # Lets find a moving average of the scores
               # Adjust based on how much smoothing you want
@@ -737,20 +630,13 @@ expected_q = reward + gamma * target_q_values * (1 - done)
             axe[a][1].set_ylabel('td error')
             axe[a][1].set_title('error between target and policy')
 
-            if self.curriculum:
-                for frame in self.epsilon_upgrades:
-                    axe[a][0].axvline(x=frame,linestyle = 'dashed', color = 'blue',alpha=0.8,label = 'epsilon upgraded')
-                    axe[a][1].axvline(x=frame,linestyle = 'dashed', color = 'blue',alpha=0.8,label = 'epsilon upgraded')
-                    
-                for frame in self.distance_upgrades:
-                    axe[a][0].axvline(x = frame,linestyle = 'dashed',color = 'red',alpha=0.8,label = 'distance upgraded')
-                    axe[a][1].axvline(x = frame,linestyle = 'dashed',color = 'red',alpha=0.8,label = 'distance upgraded')
-
-
-        
-
+        self.__additional_graphs__(axe)
 
         display(fig)
+
+    def __additional_graphs__(self,axe):
+        """Empty class designed to be overriden by child classes"""
+        pass
 
     def results(self):
         """ Output the losses, action distribution, running avg of Q-values,
@@ -806,6 +692,31 @@ expected_q = reward + gamma * target_q_values * (1 - done)
         }
         torch.save(training_checkpoint, os.path.join(self.filepath, 'training.pth'))
 
+    def __getModelParam__(self):
+        param = {
+            'len_game': self.len_game,
+            'n_agents': self.n_agents,
+            'replay_buffer_size': self.replay_buffer_size,
+            'policy_update': self.policy_update,
+            'target_update': self.target_update,
+            'gamma': self.gamma,
+            'tau' : self.tau,
+            'batch_size': self.batch_size,
+            'lambda_entropy': self.lambda_entropy,
+            'lr': self.lr,
+            'lr_step_size': self.lr_step_size,
+            'lr_gamma': self.lr_gamma,
+            'n_frames': self.n_frames,
+            'alpha': self.alpha,
+            'beta' : self.beta,
+            'decay_total': self.decay_total,
+            'per' : self.per,
+            'agent_pos' : self.agent_pos,
+            'target_pos' : self.target_pos,
+            'type_training': 'Basic'
+        }
+        return param
+
     def save(self):
         """Save the model"""
         # --- first save agent model --- #
@@ -830,30 +741,7 @@ expected_q = reward + gamma * target_q_values * (1 - done)
             os.mkdir(fd_best)
 
         # now to save the hyperparameters for this mod
-        param = {
-            'len_game': self.len_game,
-            'n_agents': self.n_agents,
-            'replay_buffer_size': self.replay_buffer_size,
-            'policy_update': self.policy_update,
-            'target_update': self.target_update,
-            'gamma': self.gamma,
-            'tau' : self.tau,
-            'batch_size': self.batch_size,
-            'lambda_entropy': self.lambda_entropy,
-            'lr': self.lr,
-            'lr_step_size': self.lr_step_size,
-            'lr_gamma': self.lr_gamma,
-            'n_frames': self.n_frames,
-            'alpha': self.alpha,
-            'beta' : self.beta,
-            'decay_total': self.decay_total,
-            'per' : self.per,
-            'agent_pos' : self.agent_pos,
-            'target_pos' : self.target_pos,
-            'curriculum': self.curriculum,
-            'curriculum_mu': self.epsilonScheduler.mu,
-            'curriculum_alpha': self.epsilonScheduler.alpha,
-        }
+        param = self.__getModelParam__()
 
         with open(os.path.join(fd_original,'hyperparameters.json'),'w') as f:
             json.dump(param,f,indent=4)

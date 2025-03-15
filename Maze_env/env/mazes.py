@@ -27,11 +27,13 @@ STAY = 0.0
 class maze_env(gym.Env):
     metadata = {'render_modes': ['human','rgb_array'],'render_fps':10,
                 'obs_type': ['rgb','spatial','basic'],
-                'action_type': ['full','cardinal']}
+                'action_type': ['full','cardinal'],
+                'dist_paradigm' : ['radius','path']}
     
     def __init__(self, maze, len_game=1000,num_agents=1,vision_len = 1, 
                  action_type = 'full',render_mode = None, obs_type=None,
-                 agents_pos= None, targets_pos = None, start_dist = None):
+                 agents_pos= None, targets_pos = None, start_dist = None,
+                 dist_paradigm = 'radius'):
         
         """ Maze Runner environment:
 
@@ -66,12 +68,17 @@ class maze_env(gym.Env):
         self.init_pos = dict()
         self.init_pos['agents'] = agents_pos
         self.init_pos['targets'] = targets_pos
+
+        # -- type of randominzation of the goal with respect to the agent -- #
+        self.dist_paradigm=dist_paradigm
+        
         
         # -- maze information -- #
         self.n_cols = maze.grid_shape[1]
         self.n_rows = maze.grid_shape[0]
         self.min_size = min(self.n_cols,self.n_rows)
-
+        self.max_dist = self.__max_dist__()
+        
         self.len_game = len_game
         self.vision_len = vision_len
         self.num_agents = num_agents
@@ -84,7 +91,10 @@ class maze_env(gym.Env):
         # -- start distance -- #
         self.start_dist = start_dist
         if self.start_dist==None:
-            self.start_dist = self.n_cols + self.n_rows + 1
+            if self.dist_paradigm == 'radius':
+                self.start_dist = self.n_cols + self.n_rows - 2
+            else:
+                self.start_dist = self.n_cols*self.n_rows - 1
         else:
             # check if the distance is allowable:
             if self.start_dist <=0:
@@ -147,6 +157,12 @@ class maze_env(gym.Env):
         self.timer = 0
         self.window = None
         self.clock = None
+
+    def __max_dist__(self):
+        if self.dist_paradigm == 'radius':
+            return self.n_cols + self.n_rows - 2
+        if self.dist_paradigm == 'path':
+            return self.n_cols*self.n_rows - 1
 
     def new_maze(self,maze):
         """ Used to give the environment a new maze design"""
@@ -280,9 +296,12 @@ class maze_env(gym.Env):
         x_t = t_pos % self.n_cols
         y_t = t_pos // self.n_cols
         # -- get path from their initial location to their target -- #
-        agents_path = self.maze.find_shortest_path(c_start = (x,y),
-                                                c_end = (x_t,y_t))
-        return agents_path
+        agents_path = self.maze.find_shortest_path(c_start = (y,x),
+                                                c_end = (y_t,x_t))
+        transformed = []
+        for row, col in agents_path:
+            transformed.append(self.n_cols * row + col)
+        return transformed
 
     def __update_init_pos__(self,pos,t_pos):
         self.init_pos['agents'] = pos
@@ -291,7 +310,10 @@ class maze_env(gym.Env):
     def __update_start_dist__(self,start_dist=None):
         self.start_dist = start_dist
         if self.start_dist == None:
-            self.start_dist = self.n_cols + self.n_rows + 1
+            if self.dist_paradigm == 'radius':
+                self.start_dist = self.n_cols + self.n_rows -2
+            else:
+                self.start_dist = self.n_cols * self.n_rows -1
 
     def _init_agents(self):
         """ Initialize the agents: this includes finding their initial positions,
@@ -328,11 +350,13 @@ class maze_env(gym.Env):
 
             # -- second lets get our target positions for the agent
             if self.init_pos['targets'] == None:
+                
                 t_pos = self.agent_target_obs_space.sample()
-                dist = self.manhattan_dist(pos,t_pos)
+                dist = self.get_dist(pos,t_pos)
                 while t_pos in pos_set or dist > self.start_dist:
                     t_pos = self.agent_target_obs_space.sample()
-                    dist = self.manhattan_dist(pos,t_pos)
+                    dist = self.get_dist(pos,t_pos)
+                
                 agent_goals.append(t_pos)
             else:
                 t_pos = self.init_pos['targets'][a]
@@ -349,7 +373,13 @@ class maze_env(gym.Env):
         self.agents_done = agents_done
         self.agents_path = agents_path
         
-    
+    def get_dist(self,point1,point2):
+        if self.dist_paradigm == 'radius':
+            return self.manhattan_dist(point1,point2)
+        
+        if self.dist_paradigm == 'path':
+            return len(self.__get_path__(point1,point2)) - 1
+
     def manhattan_dist(self,point1, point2):
         x_1 = point1 % self.n_cols
         x_2 = point2 % self.n_cols
@@ -633,7 +663,7 @@ class maze_env(gym.Env):
             pos = self.agent_positions[a]
             t_pos = self.agent_goals[a]
             vision = self._get_vision(a)
-            goal_dist = self.manhattan_dist(pos,t_pos)
+            goal_dist = self.get_dist(pos,t_pos)
             info[f'agent_{a}'] = {'UP_vision' : vision['UP'],
                                   'DOWN_vision': vision['DOWN'],
                                   'LEFT_vision': vision['LEFT'],
@@ -642,7 +672,7 @@ class maze_env(gym.Env):
                                   'UP_RIGHT_vision': vision['UP_RIGHT'],
                                   'DOWN_LEFT_vision': vision['DOWN_LEFT'],
                                   'DOWN_RIGHT_vision': vision['DOWN_RIGHT'],
-                                  'man_dist': goal_dist,
+                                  'dist': goal_dist,
                                   'done' : self.agents_done[a],
                                   'path' : self.agents_path[a]}
 
@@ -652,6 +682,7 @@ class maze_env(gym.Env):
         info['timer']=self.timer
         info['len_game'] = self.len_game
         info['n_agents'] = self.num_agents
+        info['max_dist'] = self.max_dist
         info['max_pos'] = self.n_cols*(self.n_rows) - 1
         
         return info

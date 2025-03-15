@@ -1,39 +1,12 @@
 import numpy as np
-
-
-class curriculumScheduler:
-    def __init__(self,start_dist = 1, threshold = 0.8):
-        self.threshold = 0.8
-        self.start_dist = start_dist
-
-    def check_threshold(self,success_rate):
-        return success_rate>self.threshold
-
-    def step(self,n=1):
-
-        self.start_dist +=n
-        print('Increasing Difficulty')
+from DQN.schedulers.epsilon_decay.basic import BaseEpsilonScheduler
             
     
-class epsilonDecayScheduler:
+class GradientEpsilonScheduler(BaseEpsilonScheduler):
     def __init__(self,start_epsilon = 1, end_epsilon = 0.1, decay_total=10000,
-                decayType = 'exponential',
-                 threshold = 0.70, n_levels=1,
+                decayType = 'exponential', n_levels=1,
                  mu = 1, alpha = 1.0):
         """mu is (0,1], alpha is (0,1]"""
-        # -- start/end and type of epsilon decays
-        self.decayType = decayType
-        self.epsilon = [start_epsilon]
-        self.start_epsilon = start_epsilon
-        self.end_epsilon = end_epsilon
-        self.decay_total = decay_total
-
-        # -- threshold -- #
-        self.threshold = threshold
-
-        # -- decay rate -- #
-        self.decay_rate = 0
-
         # -- rate at which to start the next level -- #
         self.mu = mu
         # -- mu increase rate -- #
@@ -41,19 +14,17 @@ class epsilonDecayScheduler:
         # -- rate at which to introduce the next level before training -- #
         self.alpha = alpha
 
+        # -- number of levels to epsilon decay -- #
         self.n_levels = n_levels
         self.cur_level = 1
 
         self.timer_threshold = decay_total/n_levels
         
-        self.timer = [0]
+        super().__init__(start_epsilon,end_epsilon,decay_total,decayType)
+
 
         self.reset(start_epsilon=start_epsilon,end_epsilon=end_epsilon,
                    decay_total=decay_total)
-
-    def __decay__(self,t):
-        decay = self.start_epsilon * np.power(0.99,self.timer[t]*self.decay_rate)
-        self.epsilon[t] = max(self.end_epsilon, decay)
 
     def __mu_rate__(self,l):
         return np.power(0.99,self.mu_rate*l)
@@ -66,7 +37,7 @@ class epsilonDecayScheduler:
         # -- go through each decay level and increment their timer -- #
         for t in range(self.cur_level):
             self.timer[t]+=1
-            self.__decay__(t)
+            self.epsilon[t] = self.__decay__(self.timer[t])
         
         # -- check if the latest epsilon decay level goes down a sufficient level -- #
         # Check if we need to start the next start distance before decaying
@@ -82,9 +53,6 @@ class epsilonDecayScheduler:
             upgrades['level'] = True
 
         return upgrades
-
-    def check_threshold(self,success_rate):
-        return success_rate < self.threshold and self.epsilon[-1] == self.end_epsilon
     
     def total_time(self):
         if self.n_levels == 1:
@@ -100,28 +68,24 @@ class epsilonDecayScheduler:
                 time = time + self.decay_total + self.timer_threshold
                 return int(time)
 
+    def __set_timer__(self):
+        self.timer = [0]
 
+    def __set_epsilon__(self):
+        self.epsilon = [self.start_epsilon]
+
+    def __setup_rates__(self):
+        super().__setup_rates__()
+        if self.decayType == 'exponential':
+            self.mu_rate = -1*np.log(self.mu)/(self.n_levels*np.log(0.99))
             
     def reset(self,**kwargs):
-        if 'start_epsilon' in kwargs:
-            self.start_epsilon = kwargs['start_epsilon']
-        if 'end_epsilon' in kwargs:
-            self.end_epsilon = kwargs['end_epsilon']
-        if 'decay_total' in kwargs:
-            self.decay_total = kwargs['decay_total']
+        super().reset(**kwargs)
 
-        # -- set up the decay rate corresponding to the type of decay -- #
-        if self.decayType == 'exponential':
-            self.decay_rate = np.log(self.end_epsilon)/(self.decay_total * np.log(0.99))
-            self.mu_rate = -1*np.log(self.mu)/(self.n_levels*np.log(0.99))
-        
-        for t in range(self.cur_level):
-            self.timer[t] = t/self.n_levels
-            self.__decay__(t) 
-
-    def copy(self):
-        return epsilonDecayScheduler(start_epsilon=self.start_epsilon,
-                                     end_epsilon=self.end_epsilon,
-                                     decay_total=self.decay_total,
-                                     decayType=self.decayType,
-                                     threshold=self.threshold)
+    def __str__(self):
+        s = super().__str__()
+        s += f'starting mu: {self.mu}\n'
+        s += f'mu rate: {self.mu_rate}\n'
+        s += f'alpha: {self.alpha}\n'
+        s += f'timer threshold: {self.timer_threshold}'
+        return s

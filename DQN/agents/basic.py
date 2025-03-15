@@ -12,7 +12,7 @@ import Maze_env.wrappers.rewards as rw
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 from IPython.display import HTML,display
-import DQN.models as models
+import DQN.models.base as base
 import json
 import Maze_env
 
@@ -20,21 +20,27 @@ import Maze_env
 baseline_rw = rw.reward_dist()
 
 
-class maze_agents:
+class BaseAgent:
     def __init__(self,maze_model,vision,
                  action_type = 'full',
                  rewards_dist = baseline_rw,
+                 dist_paradigm = 'radius',
                    **kwargs):
         """Initalize the base agent class, put the vision length to give the agents"""
 
         # -- vision of the agent -- #
         self.vision = vision
 
+        # -- type of distance to goal -- #
+        self.dist_paradigm = dist_paradigm
+
+
         # -- rewards distribution -- #
         self.rewards_dist = rewards_dist
 
         # -- shape of the CNN input -- #
         self.CNN_shape = (3,2*vision + 1, 2*vision + 1)
+        
 
         # -- action type --#
         # -- full for all the cardinal directions and stop -- #
@@ -46,7 +52,7 @@ class maze_agents:
 
         # -- initalize the maze model -- #
         self.maze_model = maze_model
-        self.Q_fun = maze_model(self.CNN_shape,self.n_actions)
+        self.Q_fun = self.__init_model__(maze_model,self.CNN_shape,self.n_actions, **kwargs)
         self.Q_fun.to(device.DEVICE)
         
         # -- load the weights -- #
@@ -61,35 +67,55 @@ class maze_agents:
 
     @classmethod
     def load(cls,name):
-        """Load the agents model"""
+        """Load the agent's model dynamically, supporting inheritance."""
         fd = os.getcwd()
-        fd = os.path.join(fd,'trained_agents')
-        fd = os.path.join(fd,f'{name}')
+        fd = os.path.join(fd, 'trained_agents', name)
 
-        # -- load model hyperparameters -- #
-        with open(os.path.join(fd,'model_hyperparameters.json'),'r') as f:
-            loaded_model_hp =json.load(f)
+        # -- Load model hyperparameters -- #
+        with open(os.path.join(fd, 'model_hyperparameters.json'), 'r') as f:
+            loaded_model_hp = json.load(f)
+
         name = loaded_model_hp['name']
         vision = loaded_model_hp['vision']
         action_type = loaded_model_hp['action_type']
-        param_load = torch.load(os.path.join(fd, f'agent.pth'))
+        dist_paradigm = loaded_model_hp['dist_paradigm']
+        param_load = torch.load(os.path.join(fd, 'agent.pth'))
 
-        # -- load reward distribution -- #
-        with open(os.path.join(fd,'reward_distribution.json'),'r') as g:
+        # -- Load reward distribution -- #
+        with open(os.path.join(fd, 'reward_distribution.json'), 'r') as g:
             rewards = json.load(g)
         rewards_dist = rw.reward_dist(**rewards)
-        result = cls(models.metadata[name],
-                     vision,
-                     action_type,
-                     load = param_load,
-                     rewards_dist = rewards_dist)
-        return result
+
+        # -- known parameters -- #
+        base_params = {
+            "name": base.metadata[name],
+            "vision": vision,
+            "action_type": action_type,
+            "load": param_load,
+            "rewards_dist": rewards_dist,
+            "dist_paradigm": dist_paradigm
+        }
+
+        # -- handle additional parameters unkown to this class -- #
+        extra_params = {k: v for k, v in loaded_model_hp.items() if k not in base_params}
+
+        return cls(**base_params, **extra_params)
     
     def copy(self):
-        copyAgent = maze_agents(self.maze_model,self.vision,self.action_type,
+        copyAgent = self.__class__(self.maze_model,self.vision,self.action_type,
                                 self.rewards_dist, load = self.Q_fun.state_dict())
         return copyAgent
         
+    def __init_model__(self, maze_model,CNN_shape,n_actions, **kwargs):
+        return maze_model(CNN_shape,n_actions)
+    
+    def max_dist(self,maze_dataset):
+        n_rows = maze_dataset.shape[0]
+        n_cols = maze_dataset.shape[1]
+        if self.dist_paradigm == "radius":
+            return n_rows + n_cols -2
+        if self.dist_paradigm == 'path':
+            return n_rows*n_cols - 1
 
     def transform_local_to_nn(self,local_state):
         """Used to transform information in enviroment numpy to Q-network pytorch,
@@ -125,7 +151,7 @@ class maze_agents:
         env = rw.maze_runner_rewards(env, rewards_dist = self.rewards_dist)
         return env
 
-    def get_action(self,env,num_agents,state,epsilon=0.0):
+    def get_action(self,env,num_agents,state,info,epsilon=0.0):
         """ Get the actions from each agent from the state
 
             env: the environment the agent is in.
@@ -139,10 +165,10 @@ class maze_agents:
         
         actions = []
         for a in range(num_agents):
-            actions.append(self.get_single_agent_action(env,state,a,epsilon))       
+            actions.append(self.get_single_agent_action(env,state,a,info,epsilon))       
         return actions
     
-    def get_single_agent_action(self,env,state,a,epsilon):
+    def get_single_agent_action(self,env,state,a,info,epsilon):
         if np.random.random()<epsilon:
             action = int(env.action_space.sample())
         else:
@@ -212,7 +238,8 @@ class maze_agents:
                            render_mode='human',obs_type = 'spatial',
                            action_type = self.action_type, 
                            agents_pos = agents_pos, targets_pos = targets_pos,
-                           start_dist = start_dist)
+                           start_dist = start_dist,
+                           dist_paradigm = self.dist_paradigm)
 
             env = self.add_wrappers(env)
 
@@ -221,17 +248,15 @@ class maze_agents:
                 obs, info = env.reset()
                 for a in range(num_agents):
                     agents_per[f'agent_{a}'] = [obs[f'local_{a}']]
-
                 done = False
-
                 cum_reward = 0
                 frame = 0
                 # Play
                 while not done:
                     # -- get actions -- #
-                    action = self.get_action(env,num_agents,obs,epsilon)
+                    action = self.get_action(env,num_agents,obs,info,epsilon)
                     # -- get next observations -- #
-                    next_obs, reward, terminated, truncated, info = env.step(action)
+                    next_obs, reward, terminated, truncated, next_info = env.step(action)
                     
                     for a in range(num_agents):
                         agents_per[f'agent_{a}'].append(next_obs[f'local_{a}'])
@@ -247,6 +272,7 @@ class maze_agents:
                     # -- done -- #
                     done = terminated or truncated
                     obs = next_obs
+                    info = next_info
                     self.__last_replay_agents_perspective__ = agents_per
                 print(f'cumulative reward: {cum_reward}')
             env.close()
@@ -259,9 +285,9 @@ class maze_agents:
         """This evaluates how good the agent is at random maze levels
             Returns the ratio completed episodes/total number of episodes""" 
         total_completed = 0
-        
-
-        for i in range(len(maze_dataset)):
+        ep = 0
+        # -- go through the number of episodes and enact the environment -- #
+        while ep < n_episodes:
             id_x = random.choice(range(len(maze_dataset)))
             maze = maze_dataset[id_x]
             self.Q_fun.eval()
@@ -272,30 +298,31 @@ class maze_agents:
                             render_mode='rgb_array',obs_type = 'spatial',
                             action_type = self.action_type, 
                             agents_pos = agents_pos, targets_pos = targets_pos,
-                            start_dist = start_dist)
+                            start_dist = start_dist,
+                            dist_paradigm = self.dist_paradigm)
 
                 env = self.add_wrappers(env)
+                
+                obs, info = env.reset()
 
-                # -- go through the number of episodes and enact the environment -- #
-                for i in range(n_episodes):
-                    obs, info = env.reset()
+                done = False
 
-                    done = False
-
-                    # Play
-                    while not done:
-                        # -- get actions -- #
-                        action = self.get_action(env,num_agents,obs,epsilon=0)
-                        # -- get next observations -- #
-                        next_obs, reward, terminated, truncated, info = env.step(action)
-                        
-                        
-                        # -- done -- #
-                        done = terminated or truncated
-                        obs = next_obs
-                        if done and info['agent_0']['pos'] == info['agent_0']['target']:
-                            total_completed+=1
+                # Play
+                while not done:
+                    # -- get actions -- #
+                    action = self.get_action(env,num_agents,obs,info,epsilon=0)
+                    # -- get next observations -- #
+                    next_obs, reward, terminated, truncated, next_info = env.step(action)
+                    
+                    
+                    # -- done -- #
+                    done = terminated or truncated
+                    obs = next_obs
+                    info = next_info
+                    if done and info['agent_0']['pos'] == info['agent_0']['target']:
+                        total_completed+=1
                 env.close()
+                ep +=1
         return total_completed/n_episodes
                
 
@@ -315,7 +342,16 @@ class maze_agents:
                 os.mkdir(fd)
             fd = os.path.join(fd,f'{name}.gif')
             ani.save(fd, writer='pillow')
-                  
+
+    def __getModelparam__(self): 
+
+            model_param = {
+            'name': self.Q_fun.name,
+            'vision': self.vision,
+            'action_type': self.action_type,
+            'dist_paradigm':self.dist_paradigm
+        }        
+            return model_param
 
     def save(self,name):
         """Save the agents model"""
@@ -331,11 +367,8 @@ class maze_agents:
         # -- save the agent model -- #
         torch.save(self.Q_fun.state_dict(),os.path.join(fd,f'agent.pth'))
 
-        model_param = {
-            'name': self.Q_fun.name,
-            'vision': self.vision,
-            'action_type': self.action_type
-        }
+        model_param = self.__getModelparam__()
+
         # -- save the type of model with other agent specific parameters -- #
         with open(os.path.join(fd,'model_hyperparameters.json'),'w') as f:
             json.dump(model_param, f, indent=4)

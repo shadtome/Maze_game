@@ -80,7 +80,7 @@ class maze_runner_rewards(Wrapper):
         new_obs, reward, terminated, truncated, info = super().step(action)
     
         for k in range(info['n_agents']):
-            self.agents_dist[f'agent_{k}'].append(info[f'agent_{k}']['man_dist'])
+            self.agents_dist[f'agent_{k}'].append(info[f'agent_{k}']['dist'])
 
             # --- positions of the agent and the goal --- #
             pos = info[f'agent_{k}']['pos']
@@ -92,7 +92,7 @@ class maze_runner_rewards(Wrapper):
             if pos not in self.agents_past[f'agent_{k}']:
                 self.agents_past[f'agent_{k}'][pos] = 1
                 
-                reward[k] +=self.rewards_dist['NEW_PLACE']/(1 + pow(info[f'agent_{k}']['man_dist'],1))
+                reward[k] +=self.rewards_dist['NEW_PLACE']/(1 + pow(info[f'agent_{k}']['dist'],1))
             else:
                 # --- punish corresponding to how many times it visited --- #
                 self.agents_past[f'agent_{k}'][pos]+=1
@@ -108,19 +108,19 @@ class maze_runner_rewards(Wrapper):
                 
             if index!=-1:
                 
-                reward[k] += self.rewards_dist['SEE_GOAL']/(1 + pow(info[f'agent_{k}']['man_dist'],1))
+                reward[k] += self.rewards_dist['SEE_GOAL']/(1 + pow(info[f'agent_{k}']['dist'],1))
             else:
                
                 reward[k] += self.rewards_dist['DONT_SEE_GOAL']
             
 
-            reward[k] += self.rewards_dist['DIST']/(1 + pow(info[f'agent_{k}']['man_dist'],1))
+            reward[k] += self.rewards_dist['DIST']/(1 + pow(info[f'agent_{k}']['dist'],1))
 
             # --- reward/ punish for getting closer/farther from the goal --- #
-            if self.agents_dist[f'agent_{k}'][0]>self.agents_dist[f'agent_{k}'][1]:
-                reward[k]+=self.rewards_dist['GET_CLOSER_CONSTANT']+self.rewards_dist['GET_CLOSER']/(1 + pow(info[f'agent_{k}']['man_dist'],1))
+            if self.agents_dist[f'agent_{k}'][0]>self.agents_dist[f'agent_{k}'][1] and pos not in self.agents_past[f'agent_{k}']:
+                reward[k]+=self.rewards_dist['GET_CLOSER_CONSTANT']+self.rewards_dist['GET_CLOSER']/(1 + pow(info[f'agent_{k}']['dist'],1))
             else:
-                reward[k]+=self.rewards_dist['GET_FARTHER_CONSTANT'] + self.rewards_dist['GET_FARTHER'] * (1 + pow(info[f'agent_{k}']['man_dist'],1))
+                reward[k]+=self.rewards_dist['GET_FARTHER_CONSTANT'] + self.rewards_dist['GET_FARTHER'] * (1 + pow(info[f'agent_{k}']['dist'],1))
 
 
             # --- reward for arriving at the goal --- #
@@ -143,7 +143,7 @@ class maze_runner_rewards(Wrapper):
         obs, info = super().reset(**kwargs)
         
         for a in range(info['n_agents']):
-            self.agents_dist[f'agent_{a}'] = deque([info[f'agent_{a}']['man_dist']],maxlen=2)
+            self.agents_dist[f'agent_{a}'] = deque([info[f'agent_{a}']['dist']],maxlen=2)
             self.agents_recent_loc[f'agent_{a}'] = deque([info[f'agent_{a}']['pos']],maxlen=3)
             self.agents_past[f'agent_{a}'] = {info[f'agent_{a}']['pos'] : 1}
             self.cum_rewards.append(0)

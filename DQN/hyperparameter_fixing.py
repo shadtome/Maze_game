@@ -1,4 +1,6 @@
-from DQN import training, agent, models
+from DQN.models import base
+from DQN.agents import basic
+from DQN.training import basic
 from Maze_env.wrappers.rewards import reward_dist
 import random
 
@@ -47,12 +49,12 @@ class agent_tuning:
     def tune(self,name, n_iter, model, vision, maze_dataset):
 
         for i in range(n_iter):
-            maze_agent = agent.maze_agents(model,
+            maze_agent = basic.maze_agents(model,
                                vision=vision,
                                action_type='cardinal',
                                rewards_dist=self.rewards)
             
-            train = training.Maze_Training(name = name,
+            train = basic.Maze_Training(name = name,
                               maze_dataset = maze_dataset,
                               maze_agent = maze_agent,
                               len_game=random.sample(self.param['len_game'],k=1)[0],
@@ -140,12 +142,12 @@ class reward_tuning:
                                   DIST = random.uniform(*self.reward_dist['DIST'])
                                   )
 
-            maze_agent = agent.maze_agents(model,
+            maze_agent = basic.maze_agents(model,
                                vision=vision,
                                action_type='cardinal',
                                rewards_dist=rewards)
             
-            train = training.Maze_Training(name = name,
+            train = basic.Maze_Training(name = name,
                               maze_dataset = maze_dataset,
                               maze_agent = maze_agent,
                               len_game=len_game,
