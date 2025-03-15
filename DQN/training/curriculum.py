@@ -187,6 +187,8 @@ class CurriculumTraining(BaseTraining):
         param['type_training'] = 'curriculum'
         param['curriculum_mu'] = self.epsilonScheduler.mu
         param['curriculum_alpha'] = self.epsilonScheduler.alpha
+        param['head_step_size'] = self.scheduler.head_step_size,
+        param['head_step_size'] = self.scheduler.head_gamma
 
         return param
     

@@ -108,7 +108,7 @@ class BaseTraining:
         print(self.epsilonScheduler)
 
         # -- number of total frames -- #
-        self.n_frames = self.epsilonScheduler.total_time() + int(self.replay_buffer_size*self.replay_buffer_min_perc)
+        self.n_frames = 5*self.epsilonScheduler.total_time() + int(self.replay_buffer_size*self.replay_buffer_min_perc)
 
         # -- learning rate -- #
         self.lr = lr
