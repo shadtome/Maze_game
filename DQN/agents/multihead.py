@@ -32,6 +32,7 @@ class MultiHeadAgent(BaseAgent):
         else:
              key = next(k for k,v in self.head_function.items() if v==level)
              return key.stop - 1
+        
 
     def get_head(self,dist):
         # do it based on the max number of heads and correlate it with 
@@ -42,8 +43,11 @@ class MultiHeadAgent(BaseAgent):
         for k,v in self.head_function.items():
              if dist in k:
                   return v
+        print(f'Went through head function and did not find range')
+        print(f'dist: {dist}\n head function: {self.head_function}')
+        return 0
         
-    
+
     def get_single_agent_action(self,env,state,a,info,epsilon):
         if np.random.random()<epsilon:
             action = int(env.action_space.sample())

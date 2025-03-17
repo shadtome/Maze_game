@@ -21,6 +21,7 @@ from DQN.schedulers.epsilon_decay.basic import BaseEpsilonScheduler
 from DQN.schedulers.epsilon_decay.epsilonLevels import GradientEpsilonScheduler
 import Maze_env.wrappers.stickAction as sA
 from DQN.training.basic import BaseTraining,MAZE_UPDATE,RANDOM_STATE
+from DQN.schedulers.distance.base import DistanceLevels
 
 
 
@@ -37,10 +38,12 @@ class CurriculumTraining(BaseTraining):
                  lr_head_gamma = 0.1,l2_regular = 1e-4,
                  start_epsilon=1,final_epsilon=0.1,n_frames=50000,
                  beta = 0.4, alpha = 0.6, decay_total = 10000, per = False,
-                 agent_pos = None, target_pos = None, 
-                 curriculum_alpha = 1.0, curriculum_mu = 1.0):
+                 agent_pos = None, target_pos = None,frame_mult = 1, 
+                 curriculum_alpha = 1.0, curriculum_mu = 1.0,
+                 n_levels = 1 ):
         
-        n_levels = maze_agent.n_heads
+        self.n_levels = n_levels
+
 
 
 
@@ -48,12 +51,13 @@ class CurriculumTraining(BaseTraining):
                          replay_buffer_size,replay_buffer_min_perc,policy_update,
                          target_update,gamma,tau,batch_size,lambda_entropy,lr,
                          lr_step_size,lr_gamma,l2_regular,start_epsilon,final_epsilon,
-                         beta,alpha,decay_total,per,agent_pos,target_pos,
+                         beta,alpha,decay_total,per,agent_pos,target_pos,frame_mult,
                          curriculum_mu=curriculum_mu,curriculum_alpha=curriculum_alpha,
-                         n_levels = n_levels,lr_heads = lr_heads,
+                         n_levels = self.n_levels,lr_heads = lr_heads,
                          head_step_size = lr_head_step_size, head_gamma = lr_head_gamma)
         
-        self.start_dist = self.get_start_dist()
+        max_dist = self.mazes.show_max_dist(self.agents.dist_paradigm)
+        self.dist_scheduler = DistanceLevels(max_dist,self.n_levels)
         self.epsilon_upgrades = []
         self.distance_upgrades = []
 
@@ -100,28 +104,26 @@ class CurriculumTraining(BaseTraining):
                 
         if updated['dist']:
             # -- increase the starting distance -- #
-            self.start_dist = self.get_start_dist()
-            print(f'Increasing Distance to {self.start_dist}')
+            print('true')
+            self.dist_scheduler.step()
+            print(f'Increasing Distance to {self.dist_scheduler.start_dist}')
             self.distance_upgrades.append(frame)
         if updated['level']:
             # -- remember that we upgraded the level -- #
             self.epsilon_upgrades.append(frame)
-
-    def get_start_dist(self):
-        return self.agents.cur_dist(self.epsilonScheduler.cur_level-1)
         
     
     def update_networks(self,update_start,frame):
         super().update_networks(update_start,frame)
         if update_start and frame % 10000 == 0:  
             print(f'Epsilon Level: {self.epsilonScheduler.cur_level}')
-            print(f'Start dist: {self.start_dist}') 
+            print(f'Start dist: {self.dist_scheduler.start_dist}') 
 
     def setup_environment(self, maze, agent_pos, target_pos, **kwargs):
-        return super().setup_environment(maze, agent_pos, target_pos,start_dist = self.start_dist, **kwargs)
+        return super().setup_environment(maze, agent_pos, target_pos,start_dist = self.dist_scheduler.start_dist, **kwargs)
 
     def reset_environment(self, env, **kwargs):
-        return super().reset_environment(env,start_dist = self.start_dist, **kwargs)
+        return super().reset_environment(env,start_dist = self.dist_scheduler.start_dist, **kwargs)
                 
 
     def get_action(self,env,state,info):
@@ -133,10 +135,15 @@ class CurriculumTraining(BaseTraining):
         for a in range(self.n_agents):
             dist_epsilon = 1.0
             cur_dist = info[f'agent_{a}']['dist']
-            if self.start_dist == None:
-                dist_epsilon = epsilon[-1]
-            elif cur_dist<=self.start_dist:
-                dist_epsilon = epsilon[self.agents.get_head(cur_dist)]  
+            # -- check if the current dist is in the range -- #
+            #print(f'cur dist: {cur_dist}')
+            #print(f'start dist: {self.dist_scheduler.start_dist}')
+            #print(f' get level : {self.dist_scheduler.get_level(cur_dist)}')
+            #print(f'len of epsilon: {len(epsilon)}')
+            #print(f' decay rate: {self.dist_scheduler.dist_rate}')
+            #print('------------------')
+            if cur_dist <= self.dist_scheduler.start_dist:
+                dist_epsilon = epsilon[self.dist_scheduler.get_level(cur_dist)] 
             
             actions.append(self.agents.get_single_agent_action(
                     env = env,
@@ -152,10 +159,10 @@ class CurriculumTraining(BaseTraining):
         return actions
     
     def in_training_test(self, maze, **kwargs):
-        return super().in_training_test(maze, start_dist = self.start_dist, **kwargs)
+        return super().in_training_test(maze, start_dist = self.dist_scheduler.start_dist, **kwargs)
     
     def test_success_rate(self, frame, **kwargs):
-        return super().test_success_rate(frame,start_dist = self.start_dist, **kwargs)
+        return super().test_success_rate(frame,start_dist = self.dist_scheduler.start_dist, **kwargs)
 
 
     def __additional_graphs__(self, axe):

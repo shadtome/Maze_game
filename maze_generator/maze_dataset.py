@@ -71,6 +71,12 @@ class Maze_dataset(Dataset):
     def __getitem__(self,idx):
         return self.mazes[idx]
     
+    def show_max_dist(self,dist_paradigm):
+        if dist_paradigm == 'radius':
+            return self.shape[0] + self.shape[1] - 2
+        else:
+            return self.shape[0]*self.shape[1] - 1
+    
 
     def show_maze(self,idx):
         MazePlot(self.__getitem__(idx)).plot()

@@ -3,11 +3,12 @@ from torch.optim.lr_scheduler import _LRScheduler
 
 
 class VariableLR(_LRScheduler):
-    def __init__(self,optimizer,step_size,head_step_size,gamma,head_gamma, last_epoch = -1):
+    def __init__(self,optimizer,step_size,head_step_size,gamma,head_gamma,head=1, last_epoch = -1):
         self.step_size = step_size
         self.head_step_size = head_step_size
         self.gamma = gamma
         self.head_gamma = head_gamma
+        self.cur_max_head = head 
         super(VariableLR,self).__init__(optimizer,last_epoch)
         
         

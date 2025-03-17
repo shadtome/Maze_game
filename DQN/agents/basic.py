@@ -372,18 +372,10 @@ class BaseAgent:
         # -- save the type of model with other agent specific parameters -- #
         with open(os.path.join(fd,'model_hyperparameters.json'),'w') as f:
             json.dump(model_param, f, indent=4)
-
-        reward_structure = {
-            'GOAL' : self.rewards_dist['GOAL'],
-            'SEE_GOAL': self.rewards_dist['SEE_GOAL'],
-            'DONT_SEE_GOAL': self.rewards_dist['DONT_SEE_GOAL'],
-            'NEW_PLACE' : self.rewards_dist['NEW_PLACE'],
-            'OLD_PLACE' : self.rewards_dist['OLD_PLACE'],
-            'GET_CLOSER': self.rewards_dist['GET_CLOSER'],
-            'GET_FARTHER': self.rewards_dist['GET_FARTHER'],
-            'DIST': self.rewards_dist['DIST'],
-            'WALL' : Maze_env.env.mazes.WALL
-        }
+        
+        reward_structure = self.rewards_dist
+        reward_structure['WALL'] = Maze_env.env.mazes.WALL
+        
         # -- save reward distribution -- #
         with open(os.path.join(fd,'reward_distribution.json'),'w') as f:
             json.dump(reward_structure,f,indent=4)

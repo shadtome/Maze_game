@@ -117,7 +117,7 @@ class maze_runner_rewards(Wrapper):
             reward[k] += self.rewards_dist['DIST']/(1 + pow(info[f'agent_{k}']['dist'],1))
 
             # --- reward/ punish for getting closer/farther from the goal --- #
-            if self.agents_dist[f'agent_{k}'][0]>self.agents_dist[f'agent_{k}'][1] and pos not in self.agents_past[f'agent_{k}']:
+            if self.agents_dist[f'agent_{k}'][0]>self.agents_dist[f'agent_{k}'][1]:
                 reward[k]+=self.rewards_dist['GET_CLOSER_CONSTANT']+self.rewards_dist['GET_CLOSER']/(1 + pow(info[f'agent_{k}']['dist'],1))
             else:
                 reward[k]+=self.rewards_dist['GET_FARTHER_CONSTANT'] + self.rewards_dist['GET_FARTHER'] * (1 + pow(info[f'agent_{k}']['dist'],1))
@@ -128,10 +128,10 @@ class maze_runner_rewards(Wrapper):
                 reward[k] += self.rewards_dist['GOAL']
 
             #reward[k] = np.clip(reward[k],-1,1)
-            #reward[k] = np.tanh(reward[k])
 
             # -- normalize the rewards compared to the size of the maze -- #
             reward[k] = reward[k]/(info['max_pos']+1)
+            reward[k] = np.tanh(reward[k])
 
             self.cum_rewards[k] += reward[k]
         

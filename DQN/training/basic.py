@@ -40,7 +40,7 @@ class BaseTraining:
                  lr=1e-3, lr_step_size = 1000, lr_gamma = 0.1, l2_regular = 1e-4,
                  start_epsilon=1,final_epsilon=0.1,
                  beta = 0.4, alpha = 0.6, decay_total = 10000, per = False,
-                 agent_pos = None, target_pos = None, **kwargs):
+                 agent_pos = None, target_pos = None,frame_mult = 1.0, **kwargs):
         """ This class must take a MultiHead maze agent"""
 
 
@@ -108,7 +108,7 @@ class BaseTraining:
         print(self.epsilonScheduler)
 
         # -- number of total frames -- #
-        self.n_frames = 5*self.epsilonScheduler.total_time() + int(self.replay_buffer_size*self.replay_buffer_min_perc)
+        self.n_frames = frame_mult*self.epsilonScheduler.total_time() + int(self.replay_buffer_size*self.replay_buffer_min_perc)
 
         # -- learning rate -- #
         self.lr = lr

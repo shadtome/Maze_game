@@ -191,7 +191,7 @@ class MultiHead(AgentNN):
     def forward(self,x,y,head):
         if isinstance(head,int):
             head = [head]
-            
+
         x = self.base(x)
         batch_size = x.size(0)
         combined = torch.cat((x,y),dim=-1)

@@ -34,7 +34,7 @@ class GradientEpsilonScheduler(BaseEpsilonScheduler):
 
     def step(self):
         upgrades = {'level': False, 'dist':False}
-        # -- go through each decay level and increment their timer -- #
+        # -- go through each decay level and incremmaze_agent.n_headsent their timer -- #
         for t in range(self.cur_level):
             self.timer[t]+=1
             self.epsilon[t] = self.__decay__(self.timer[t])
