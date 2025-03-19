@@ -23,7 +23,7 @@ import Maze_env.wrappers.stickAction as sA
 
 #################
 # ----- Fixed Hyperparameters ---------- #
-MAZE_UPDATE = 100
+MAZE_UPDATE = 1
 RANDOM_STATE = 49
 
 
