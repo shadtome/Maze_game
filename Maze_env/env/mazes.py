@@ -25,7 +25,7 @@ WALL = -0.75
 STAY = 0.0
 
 class maze_env(gym.Env):
-    metadata = {'render_modes': ['human','rgb_array'],'render_fps':10,
+    metadata = {'render_modes': ['human','rgb_array'],'render_fps':12,
                 'obs_type': ['rgb','spatial','basic'],
                 'action_type': ['full','cardinal'],
                 'dist_paradigm' : ['radius','path']}
@@ -183,6 +183,11 @@ class maze_env(gym.Env):
         global_var.append(self.agents_done[a])
         global_var.append(self.manhattan_dist(pos,g_pos))
         return np.array(global_var)
+    
+    def __getCoords__(self,pos):
+        x_pos = pos % self.n_cols
+        y_pos = pos // self.n_cols
+        return x_pos,y_pos
 
     def __spatial__(self, a):
         """ gets local spatial information, i.e. get the local image data for the 
@@ -291,10 +296,9 @@ class maze_env(gym.Env):
         return local
           
     def __get_path__(self,pos,t_pos):
-        x = pos % self.n_cols
-        y = pos // self.n_cols
-        x_t = t_pos % self.n_cols
-        y_t = t_pos // self.n_cols
+        x ,y = self.__getCoords__(pos)
+        x_t,y_t = self.__getCoords__(t_pos)
+
         # -- get path from their initial location to their target -- #
         agents_path = self.maze.find_shortest_path(c_start = (y,x),
                                                 c_end = (y_t,x_t))
@@ -351,11 +355,12 @@ class maze_env(gym.Env):
             # -- second lets get our target positions for the agent
             if self.init_pos['targets'] == None:
                 
-                t_pos = self.agent_target_obs_space.sample()
+                t_pos = self.agent_target_obs_space.sample() 
                 dist = self.get_dist(pos,t_pos)
                 while t_pos in pos_set or dist > self.start_dist:
                     t_pos = self.agent_target_obs_space.sample()
                     dist = self.get_dist(pos,t_pos)
+                    
                 
                 agent_goals.append(t_pos)
             else:
@@ -381,10 +386,8 @@ class maze_env(gym.Env):
             return len(self.__get_path__(point1,point2)) - 1
 
     def manhattan_dist(self,point1, point2):
-        x_1 = point1 % self.n_cols
-        x_2 = point2 % self.n_cols
-        y_1 = point1// self.n_cols
-        y_2 = point2//self.n_cols
+        x_1,y_1 = self.__getCoords__(point1)
+        x_2,y_2 = self.__getCoords__(point2)
         return abs(x_1 - x_2) + abs(y_1 - y_2)
     
     def _get_vision(self,a):
@@ -733,6 +736,7 @@ class maze_env(gym.Env):
                     
                     rewards +=WALL
                 rewards +=STAY
+            
 
             # --- determine if agent is done or not --- #
             if self.agent_positions[i]==self.agent_goals[i] or self.agents_done[i]:
@@ -741,6 +745,7 @@ class maze_env(gym.Env):
                 
             else:
                 self.agent_positions[i] = pos
+                self.agents_path[i] = self.__get_path__(pos,self.agent_goals[i])
                 self.agents_done[i] = False
 
             
@@ -788,17 +793,14 @@ class maze_env(gym.Env):
 
         self._draw_maze(screen,pix_square_size)
 
-        # Draw the targets: 
-        n_cols = self.n_cols
-        n_rows = self.n_rows
+        # Draw the targets:
 
         norm = Normalize(vmin=0,vmax=self.num_agents-1)
         colormap = plt.cm.get_cmap('tab10',self.num_agents)
 
         for i, point in enumerate(self.agent_goals):
             color = colormap(norm(i))
-            x = point%n_cols
-            y = point//n_cols
+            x,y = self.__getCoords__(point)
             pos = np.array([x,y])
             pygame.draw.rect(
                 surface = screen, 
@@ -811,8 +813,7 @@ class maze_env(gym.Env):
         # Draw the agents
         for i, point in enumerate(self.agent_positions):
             color = colormap(norm(i))
-            x = point % n_cols
-            y = point // n_cols
+            x,y = self.__getCoords__(point)
             pos = np.array([x,y])
             pygame.draw.circle(
                 surface = screen,
@@ -820,6 +821,19 @@ class maze_env(gym.Env):
                 center = (pos + 0.5) * pix_square_size,
                 radius = pix_square_size/3,
             )
+
+        if self.dist_paradigm == 'path':
+            for i, path in enumerate(self.agents_path):
+                color = colormap(norm(i))
+                for point in path[1:]:
+                    x,y = self.__getCoords__(point)
+                    pos = np.array([x,y])
+                    pygame.draw.circle(
+                        surface = screen,
+                        #color = tuple(int(c*255) for c in color[:3]),
+                        color = (255,0,0),
+                        center = (pos + 0.5) * pix_square_size,
+                        radius = pix_square_size/7,)
 
         
 

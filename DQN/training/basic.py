@@ -109,7 +109,7 @@ class BaseTraining:
 
         # -- number of total frames -- #
         self.frame_mult = frame_mult
-        self.n_frames = frame_mult*self.epsilonScheduler.total_time() + int(self.replay_buffer_size*self.replay_buffer_min_perc)
+        self.n_frames = int(frame_mult*self.epsilonScheduler.total_time()) + int(self.replay_buffer_size*self.replay_buffer_min_perc)
 
         # -- learning rate -- #
         self.lr = lr

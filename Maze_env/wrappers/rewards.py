@@ -138,7 +138,7 @@ class maze_runner_rewards(Wrapper):
 
             # -- normalize the rewards compared to the size of the maze -- #
             reward[k] = reward[k]/(info['max_pos']+1)
-            #reward[k] = np.tanh(reward[k])
+            reward[k] = np.tanh(reward[k])
 
             self.cum_rewards[k] += reward[k]
         

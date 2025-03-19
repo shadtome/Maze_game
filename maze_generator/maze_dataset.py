@@ -27,19 +27,34 @@ class Maze_dataset(Dataset):
         self.shape = shape
         self.maze_type = maze_type
         self.mazes = [self.generate_maze(shape, **kwargs) for _ in range(num_mazes)]
-        
+
+    def __construct_dataset__(self,shape,**kwargs):
+        None    
 
     def generate_maze(self,shape, **kwargs):
         """Generate mazes based on the type of maze generation
         shape: shape of the maze (h,w)"""
         if self.maze_type == 'dfs':
+            lattice_dim = 2
+            accessible_cells = None
+            max_tree_depth = None
+            do_forks = True
+            for k,v in kwargs.items():
+                if k == 'lattice_dim':
+                    lattice_dim = v
+                if k == 'accessible_cells':
+                    accessible_cells = v
+                if k == 'max_tree_depth':
+                    max_tree_depth = v
+                if k == 'do_forks':
+                    do_forks = v
             maze = LatticeMazeGenerators.gen_dfs(
                 grid_shape = shape,
-                lattice_dim=2,
-                accessible_cells=None,
-                max_tree_depth=None,
+                lattice_dim=lattice_dim,
+                accessible_cells=accessible_cells,
+                max_tree_depth=max_tree_depth,
                 start_coord=None,
-                do_forks=True
+                do_forks=do_forks
             )
             return maze
         if self.maze_type == 'wilson':
@@ -48,20 +63,40 @@ class Maze_dataset(Dataset):
             )
             return maze
         if self.maze_type == 'percolation':
+            p = 1
+            lattice_dim = 2
+            for k,v in kwargs.items():
+                if k == 'p':
+                    p = v
+                if k == 'lattice_dim':
+                    lattice_dim = v
             maze = LatticeMazeGenerators.gen_percolation(
                 grid_shape=shape,
-                p=1,
-                lattice_dim = 2,
+                p=p,
+                lattice_dim = lattice_dim,
                 start_coord=None,
             )
             return maze
         if self.maze_type == 'prim':
+            lattice_dim = 2
+            accessible_cells = None
+            max_tree_depth = None
+            do_forks = True
+            for k,v in kwargs.items():
+                if k == 'lattice_dim':
+                    lattice_dim = v
+                if k == 'accessible_cells':
+                    accessible_cells = v
+                if k == 'max_tree_depth':
+                    max_tree_depth = v
+                if k == 'do_forks':
+                    do_forks = v
             maze = LatticeMazeGenerators.gen_prim(
                 grid_shape=shape,
-                lattice_dim=2,
-                accessible_cells=None,
-                max_tree_depth=None,
-                do_forks=True,
+                lattice_dim=lattice_dim,
+                accessible_cells=accessible_cells,
+                max_tree_depth=max_tree_depth,
+                do_forks=do_forks,
                 start_coord=None
             )
 

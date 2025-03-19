@@ -16,3 +16,8 @@ In this gif, the red represents other agents it can see, while green represents 
 
 We also include some global information, the position of the agent and the goal using the equation: $$\text{pos} = \text{total cols} \cdot \text{col} + \text{row}$$, and we also include if the agent is done and the Manhattan distance to their goal.
 
+
+## Examples
+
+![Demo](media/3x3All.gif)
+

@@ -15,6 +15,8 @@ from IPython.display import HTML,display
 import DQN.models.base as base
 import json
 import Maze_env
+import imageio
+import pygame
 
 # -- baseline rewards -- #
 baseline_rw = rw.reward_dist()
@@ -65,6 +67,9 @@ class BaseAgent:
         # -- save the last replay for the agents -- #
         self.__last_replay_agents_perspective__ = None
 
+        # -- record the pygame output -- #
+        self.__pygame_output__ = None
+
     @classmethod
     def load(cls,name):
         """Load the agent's model dynamically, supporting inheritance."""
@@ -103,7 +108,7 @@ class BaseAgent:
     
     def copy(self):
         copyAgent = self.__class__(self.maze_model,self.vision,self.action_type,
-                                self.rewards_dist, load = self.Q_fun.state_dict())
+                                self.rewards_dist,self.dist_paradigm, load = self.Q_fun.state_dict())
         return copyAgent
         
     def __init_model__(self, maze_model,CNN_shape,n_actions, **kwargs):
@@ -324,6 +329,54 @@ class BaseAgent:
                 env.close()
                 ep +=1
         return total_completed/n_episodes
+    
+
+    def make_gif(self,name,maze_dataset, len_game = 50, n_episodes = 1, num_agents = 1,epsilon = 0,
+                  agents_pos=None, targets_pos = None, start_dist = None,frame_rate=10):
+        self.Q_fun.eval()
+        with torch.no_grad():
+            maze = maze_dataset[0]
+            # -- make environment -- #
+            env = gym.make('Maze_env/MazeRunner-v0',len_game = len_game,num_agents=num_agents,vision_len=self.vision,maze=maze,
+                           render_mode='rgb_array',obs_type = 'spatial',
+                           action_type = self.action_type, 
+                           agents_pos = agents_pos, targets_pos = targets_pos,
+                           start_dist = start_dist,
+                           dist_paradigm = self.dist_paradigm)
+
+            env = self.add_wrappers(env)
+            frames = []
+            # -- go through the number of episodes and enact the environment -- #
+            for i in range(n_episodes):
+                
+                random_index = random.randint(0,len(maze_dataset)-1)
+                maze = maze_dataset[random_index]
+
+                obs, info = env.reset(options = {'new_maze':maze})
+            
+                done = False
+                
+                # Play
+                while not done:
+                    # -- save render frame -- #
+                    frames.append(env.render())
+                    # -- get actions -- #
+                    action = self.get_action(env,num_agents,obs,info,epsilon)
+                    # -- get next observations -- #
+                    next_obs, reward, terminated, truncated, next_info = env.step(action)
+                    
+                    # -- done -- #
+                    done = terminated or truncated
+                    obs = next_obs
+                    info = next_info
+                    
+            env.close()
+        fd = os.getcwd()
+        fd = os.path.join(fd, 'media')
+        if os.path.exists(fd) == False:
+            os.mkdir(fd)
+        fd = os.path.join(fd,f'{name}.gif')  
+        imageio.mimsave(fd, frames, fps=frame_rate,loop=0)
                
 
     def animate_last_replay(self,agent_id,name, save = False):

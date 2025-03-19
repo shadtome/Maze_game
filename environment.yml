@@ -33,4 +33,5 @@ dependencies:
       - maze-dataset
       - pygame
       - gymnasium
+      - imageio
       
