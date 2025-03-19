@@ -108,6 +108,7 @@ class BaseTraining:
         print(self.epsilonScheduler)
 
         # -- number of total frames -- #
+        self.frame_mult = frame_mult
         self.n_frames = frame_mult*self.epsilonScheduler.total_time() + int(self.replay_buffer_size*self.replay_buffer_min_perc)
 
         # -- learning rate -- #
@@ -536,7 +537,6 @@ class BaseTraining:
                     start_updating = True
 
                 self.update_networks(start_updating,frame)
-                
 
                 frame+=1
 
@@ -549,7 +549,7 @@ class BaseTraining:
                 stop_training = self.test_success_rate(frame)
 
             # -- here we have our during training functions -- #
-            if test_agent and start_updating and ep % 1000 == 0:
+            if test_agent and start_updating and ep % 500 == 0:
                 self.in_training_test(maze) 
 
             # -- update the plots -- #
@@ -713,7 +713,8 @@ class BaseTraining:
             'per' : self.per,
             'agent_pos' : self.agent_pos,
             'target_pos' : self.target_pos,
-            'type_training': 'Basic'
+            'type_training': 'Basic',
+            'frame_mult': self.frame_mult
         }
         return param
 
@@ -721,6 +722,7 @@ class BaseTraining:
         """Save the model"""
         # --- first save agent model --- #
         self.agents.save(self.name)
+        
 
         # --- next, save the best agent model --- #
         self.best_agent.save(self.name + '_best')
@@ -739,6 +741,12 @@ class BaseTraining:
         fd_best = os.path.join(fd,f'{self.name}_best')
         if os.path.exists(fd_best)==False:
             os.mkdir(fd_best)
+
+        # -- save the schedulers parameters -- #
+        self.epsilonScheduler.save(fd_original)
+        self.epsilonScheduler.save(fd_best)
+        self.scheduler.save(fd_original)
+        self.scheduler.save(fd_best)
 
         # now to save the hyperparameters for this mod
         param = self.__getModelParam__()

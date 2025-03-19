@@ -179,8 +179,6 @@ class MultiHead(AgentNN):
             nn.Linear(32 + 4,32),
             nn.ReLU(),
             nn.Linear(32,12),
-            nn.ReLU(),
-            nn.Linear(12,12),
             nn.ReLU()
         ) 
 

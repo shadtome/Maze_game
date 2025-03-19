@@ -1,4 +1,6 @@
 import numpy as np
+import os
+import json
 
 
 class BaseEpsilonScheduler:
@@ -64,3 +66,17 @@ class BaseEpsilonScheduler:
         s += f'Decay total: {self.decay_total}\n'
         s += f'Decay rate: {self.decay_rate}\n'
         return s
+    
+    def __getModelParam__(self):
+        return {
+            'start_epsilon': self.start_epsilon,
+            'end_epsilon': self.end_epsilon,
+            'decay_total': self.decay_total
+        }
+    
+    def save(self,filedir):
+        
+        param = self.__getModelParam__()
+
+        with open(os.path.join(filedir,'EpsilonDecayParameters.json'),'w') as f:
+            json.dump(param,f,indent=4)

@@ -1,4 +1,6 @@
 from torch.optim.lr_scheduler import _LRScheduler
+import os
+import json
 
 
 class BasicHeadLR(_LRScheduler):
@@ -30,3 +32,11 @@ class BasicHeadLR(_LRScheduler):
         s += f'Step size: {self.step_size}\n'
         s += f'Gamma: {self.gamma}'
         return s
+    
+    def __getModelParams__(self):
+        return {'step_size':self.step_size,'gamma':self.gamma}
+
+    def save(self,filedir):
+        params = self.__getModelParams__()
+        with open(os.path.join(filedir,'LearningRateParameters.json'),'w') as f:
+            json.dump(params,f)

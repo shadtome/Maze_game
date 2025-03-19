@@ -21,7 +21,7 @@ baseline_rw = rw.reward_dist()
 
 
 class BaseAgent:
-    def __init__(self,maze_model,vision,
+    def __init__(self,model,vision,
                  action_type = 'full',
                  rewards_dist = baseline_rw,
                  dist_paradigm = 'radius',
@@ -51,8 +51,8 @@ class BaseAgent:
         self.action_type = action_type
 
         # -- initalize the maze model -- #
-        self.maze_model = maze_model
-        self.Q_fun = self.__init_model__(maze_model,self.CNN_shape,self.n_actions, **kwargs)
+        self.maze_model = model
+        self.Q_fun = self.__init_model__(model,self.CNN_shape,self.n_actions, **kwargs)
         self.Q_fun.to(device.DEVICE)
         
         # -- load the weights -- #
@@ -75,7 +75,7 @@ class BaseAgent:
         with open(os.path.join(fd, 'model_hyperparameters.json'), 'r') as f:
             loaded_model_hp = json.load(f)
 
-        name = loaded_model_hp['name']
+        name = loaded_model_hp['model_name']
         vision = loaded_model_hp['vision']
         action_type = loaded_model_hp['action_type']
         dist_paradigm = loaded_model_hp['dist_paradigm']
@@ -88,7 +88,7 @@ class BaseAgent:
 
         # -- known parameters -- #
         base_params = {
-            "name": base.metadata[name],
+            "model": base.metadata[name],
             "vision": vision,
             "action_type": action_type,
             "load": param_load,
@@ -346,7 +346,7 @@ class BaseAgent:
     def __getModelparam__(self): 
 
             model_param = {
-            'name': self.Q_fun.name,
+            'model_name': self.Q_fun.name,
             'vision': self.vision,
             'action_type': self.action_type,
             'dist_paradigm':self.dist_paradigm
@@ -373,8 +373,9 @@ class BaseAgent:
         with open(os.path.join(fd,'model_hyperparameters.json'),'w') as f:
             json.dump(model_param, f, indent=4)
         
-        reward_structure = self.rewards_dist
+        reward_structure = self.rewards_dist.rewards
         reward_structure['WALL'] = Maze_env.env.mazes.WALL
+        reward_structure['DO_ACTION'] = Maze_env.env.mazes.DO_ACTION
         
         # -- save reward distribution -- #
         with open(os.path.join(fd,'reward_distribution.json'),'w') as f:

@@ -45,7 +45,8 @@ class reward_dist:
             'GET_FARTHER_CONSTANT': -0.0,
             'DIST': 0.0
         }
-
+        self.timer = 0
+        self.decay_rate = 0
         self.change_rewards(**kwargs)
 
     def change_rewards(self, **kwargs):
@@ -57,6 +58,12 @@ class reward_dist:
 
     def __getitem__(self,item):
         return self.rewards[item]
+    
+    def __setitem__(self,key,value):
+        self.rewards[key] = value
+
+    def step(self):
+        None
         
 
     
@@ -131,7 +138,7 @@ class maze_runner_rewards(Wrapper):
 
             # -- normalize the rewards compared to the size of the maze -- #
             reward[k] = reward[k]/(info['max_pos']+1)
-            reward[k] = np.tanh(reward[k])
+            #reward[k] = np.tanh(reward[k])
 
             self.cum_rewards[k] += reward[k]
         
