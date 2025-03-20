@@ -31,6 +31,9 @@ class reward_dist:
         GET_FARTHER:
         GET_FARTHER_CONSTANT:
         DIST:
+        HIT_OTHER:
+        TOO_CLOSE:
+        TOO_CLOSE_CONSTANT:
         """
         # -- Reward parameters -- #
         self.rewards = {
@@ -43,7 +46,10 @@ class reward_dist:
             'GET_CLOSER_CONSTANT': 0.0,
             'GET_FARTHER': -0.0,
             'GET_FARTHER_CONSTANT': -0.0,
-            'DIST': 0.0
+            'DIST': 0.0,
+            'HIT_OTHER': -1.0,
+            'TOO_CLOSE': -0.0,
+            'TOO_CLOSE_CONSTANT': -0.0,
         }
         self.timer = 0
         self.decay_rate = 0
@@ -85,6 +91,7 @@ class maze_runner_rewards(Wrapper):
 
     def step(self,action):
         new_obs, reward, terminated, truncated, info = super().step(action)
+
     
         for k in range(info['n_agents']):
             self.agents_dist[f'agent_{k}'].append(info[f'agent_{k}']['dist'])
@@ -106,22 +113,31 @@ class maze_runner_rewards(Wrapper):
                 reward[k]+=self.rewards_dist['OLD_PLACE']* float(self.agents_past[f'agent_{k}'][pos])
 
             # --- check neighborhoods for goals and other agents --- #
-            index = -1
-            for d in ['UP', 'DOWN','LEFT','RIGHT','UP_LEFT','UP_RIGHT','DOWN_LEFT','DOWN_RIGHT']:
+            index_goal = -1
+            index_agent = +1000
+            for d in ['CENTER','UP', 'DOWN','LEFT','RIGHT','UP_LEFT','UP_RIGHT','DOWN_LEFT','DOWN_RIGHT']:
                 try:
-                    index = info[f'agent_{k}'][f'{d}_vision'].index(3)
+                    index_goal = info[f'agent_{k}'][f'{d}_vision'].index(3)
                 except ValueError:
                     None
-                
-            if index!=-1:
+                try:
+                    index_agent = min(index_agent,info[f'agent_{k}'][f'{d}_vision'].index(1))
+                except ValueError:
+                    None
+            # -- reward or punish for seeing the goal or not -- #
+            if index_goal!=-1:
                 
                 reward[k] += self.rewards_dist['SEE_GOAL']/(1 + pow(info[f'agent_{k}']['dist'],1))
             else:
                
                 reward[k] += self.rewards_dist['DONT_SEE_GOAL']
             
+            # -- discourge getting closer to other agents -- #
+            if index_agent!=1000:
+                reward[k] += self.rewards_dist['TOO_CLOSE_CONSTANT'] + self.rewards_dist['TOO_CLOSE']/(1 + index_agent)
+            
 
-            reward[k] += self.rewards_dist['DIST']/(1 + pow(info[f'agent_{k}']['dist'],1))
+            #reward[k] += self.rewards_dist['DIST']/(1 + pow(info[f'agent_{k}']['dist'],1))
 
             # --- reward/ punish for getting closer/farther from the goal --- #
             if self.agents_dist[f'agent_{k}'][0]>self.agents_dist[f'agent_{k}'][1]:
@@ -131,14 +147,17 @@ class maze_runner_rewards(Wrapper):
 
 
             # --- reward for arriving at the goal --- #
-            if pos==t_pos and agent_done:
+            if pos==t_pos and agent_done and info[f'agent_{k}']['dead']==False:
                 reward[k] += self.rewards_dist['GOAL']
+            # --- punish for hitting other agents --- #
+            elif info[f'agent_{k}']['dead']:
+                reward[k] += self.rewards_dist['HIT_OTHER']
 
             #reward[k] = np.clip(reward[k],-1,1)
 
             # -- normalize the rewards compared to the size of the maze -- #
             reward[k] = reward[k]/(info['max_pos']+1)
-            reward[k] = np.tanh(reward[k])
+            #reward[k] = np.tanh(reward[k])
 
             self.cum_rewards[k] += reward[k]
         

@@ -214,7 +214,7 @@ class BaseAgent:
     
     def run_agent(self,maze, len_game = 50, n_episodes = 1, num_agents = 1,epsilon = 0, sample_prob = False,
                   agents_pos=None, targets_pos = None, start_dist = None,
-                  output_frame_rewards = False):
+                  output_frame_rewards = False,collision=False):
         """Run the agent in the enviroment that is human readable using pygame.
 
             maze: a maze from the maze_dataset, needs the connection_list,
@@ -244,7 +244,8 @@ class BaseAgent:
                            action_type = self.action_type, 
                            agents_pos = agents_pos, targets_pos = targets_pos,
                            start_dist = start_dist,
-                           dist_paradigm = self.dist_paradigm)
+                           dist_paradigm = self.dist_paradigm,
+                           collision=collision)
 
             env = self.add_wrappers(env)
 

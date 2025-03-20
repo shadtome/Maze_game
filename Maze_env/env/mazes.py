@@ -33,7 +33,7 @@ class maze_env(gym.Env):
     def __init__(self, maze, len_game=1000,num_agents=1,vision_len = 1, 
                  action_type = 'full',render_mode = None, obs_type=None,
                  agents_pos= None, targets_pos = None, start_dist = None,
-                 dist_paradigm = 'radius'):
+                 dist_paradigm = 'radius', collision = False):
         
         """ Maze Runner environment:
 
@@ -69,6 +69,9 @@ class maze_env(gym.Env):
         self.init_pos['agents'] = agents_pos
         self.init_pos['targets'] = targets_pos
 
+        # -- collision on or off -- #
+        self.collision = collision
+
         # -- type of randominzation of the goal with respect to the agent -- #
         self.dist_paradigm=dist_paradigm
         
@@ -83,6 +86,7 @@ class maze_env(gym.Env):
         self.vision_len = vision_len
         self.num_agents = num_agents
         self.agent_positions = None
+        self.dead = None
         self.agent_goals = None
         self.agents_done = None
         self.agents_path = None
@@ -200,9 +204,20 @@ class maze_env(gym.Env):
         spatial = np.zeros(shape=(grid_size,grid_size,3),dtype=int)
         x = self.vision_len
         y = self.vision_len
-        spatial[y][x][0] = 0
-        spatial[y][x][1] = 0
-        spatial[y][x][2] = 255
+        
+        # CENTER 
+        if vision['CENTER'][0]==0:
+            spatial[y][x][0] = 0
+            spatial[y][x][1] = 0
+            spatial[y][x][2] = 255
+        elif vision['CENTER'][0]==2:
+            spatial[y][x][0] = 255
+            spatial[y][x][1] = 0
+            spatial[y][x][2] = 0
+        elif vision['CENTER'][0]==3:
+            spatial[y][x][0] = 0
+            spatial[y][x][1] = 255
+            spatial[y][x][2] = 0
 
         def place_value(val,x,y,dist,diag = False):
             alpha = 0.3
@@ -328,6 +343,7 @@ class maze_env(gym.Env):
         agent_goals = []
         agents_done = []
         agents_path = []
+        dead = []
 
         pos_set = set()
         # -- first lets put in our positions that are initialized by the user -- #
@@ -368,6 +384,7 @@ class maze_env(gym.Env):
 
             # -- append False for the agent is done parameter -- #
             agents_done.append(False)
+            dead.append(False)
 
             # -- get minimal path to goal -- #
             agents_path.append(self.__get_path__(pos,t_pos))
@@ -377,6 +394,7 @@ class maze_env(gym.Env):
         self.agent_goals = agent_goals
         self.agents_done = agents_done
         self.agents_path = agents_path
+        self.dead = dead
         
     def get_dist(self,point1,point2):
         if self.dist_paradigm == 'radius':
@@ -433,6 +451,15 @@ class maze_env(gym.Env):
         agent_pos_set = {agent_positions[i] for i in agents_not_done }
         
         agent_goal = self.agent_goals[a]
+
+        # CENTER 
+        center_vision = [0]
+        other_pos = agent_pos_set - {pos}
+        if pos in other_pos:
+            center_vision[0]=2
+        elif pos == agent_goal:
+            center_vision[0] = 3
+        vision['CENTER'] = center_vision
         
         # UP
         up_vision = []
@@ -667,7 +694,8 @@ class maze_env(gym.Env):
             t_pos = self.agent_goals[a]
             vision = self._get_vision(a)
             goal_dist = self.get_dist(pos,t_pos)
-            info[f'agent_{a}'] = {'UP_vision' : vision['UP'],
+            info[f'agent_{a}'] = {'CENTER_vision': vision['CENTER'],
+                                  'UP_vision' : vision['UP'],
                                   'DOWN_vision': vision['DOWN'],
                                   'LEFT_vision': vision['LEFT'],
                                   'RIGHT_vision': vision['RIGHT'],
@@ -677,6 +705,7 @@ class maze_env(gym.Env):
                                   'DOWN_RIGHT_vision': vision['DOWN_RIGHT'],
                                   'dist': goal_dist,
                                   'done' : self.agents_done[a],
+                                  'dead' : self.dead[a],
                                   'path' : self.agents_path[a]}
 
             if self.obs_type == 'rgb' or self.obs_type=='spatial':
@@ -689,6 +718,15 @@ class maze_env(gym.Env):
         info['max_pos'] = self.n_cols*(self.n_rows) - 1
         
         return info
+    
+    def __collisions__(self,prev_pos,cur_pos):
+        """ Check if there are any collisions between the agents"""
+        collisions = []
+        for i in range(self.num_agents):
+            for j in range(i+1,self.num_agents):
+                if (prev_pos[i] == cur_pos[j] and prev_pos[j] == cur_pos[i]) or (cur_pos[i] == cur_pos[j]):
+                    collisions.append((i,j))
+        return collisions
     
     def step(self,actions):
         
@@ -705,7 +743,7 @@ class maze_env(gym.Env):
 
         # --- timer for how long the environment is going --- #
         self.timer+=1
-        
+        prev_pos = self.agent_positions.copy()
         # --- go through each agent's action and process it --- #
         for i, action in enumerate(actions):
 
@@ -748,10 +786,19 @@ class maze_env(gym.Env):
                 self.agents_path[i] = self.__get_path__(pos,self.agent_goals[i])
                 self.agents_done[i] = False
 
-            
+            # -- check if agent went through another agent -- #
 
             agent_rewards.append(rewards)
 
+        # -- check for collisions -- #
+        if self.collision:
+            collisions = self.__collisions__(prev_pos,self.agent_positions)
+            for i,j in collisions:
+                self.agents_done[i] = True
+                self.agents_done[j] = True
+                self.dead[i] = True
+                self.dead[j] = True
+                
         # --- check if all agents are done --- #
         done = all(self.agents_done)
 
@@ -799,41 +846,44 @@ class maze_env(gym.Env):
         colormap = plt.cm.get_cmap('tab10',self.num_agents)
 
         for i, point in enumerate(self.agent_goals):
-            color = colormap(norm(i))
-            x,y = self.__getCoords__(point)
-            pos = np.array([x,y])
-            pygame.draw.rect(
-                surface = screen, 
-                color = tuple(int(c*255) for c in color[:3]), 
-                rect=pygame.Rect(pix_square_size * pos, 
-                            (pix_square_size,pix_square_size)
-                            ),
-                )
+            if self.agents_done[i]==False:
+                color = colormap(norm(i))
+                x,y = self.__getCoords__(point)
+                pos = np.array([x,y])
+                pygame.draw.rect(
+                    surface = screen, 
+                    color = tuple(int(c*255) for c in color[:3]), 
+                    rect=pygame.Rect(pix_square_size * pos, 
+                                (pix_square_size,pix_square_size)
+                                ),
+                    )
         self._draw_maze(screen,pix_square_size)
         # Draw the agents
         for i, point in enumerate(self.agent_positions):
-            color = colormap(norm(i))
-            x,y = self.__getCoords__(point)
-            pos = np.array([x,y])
-            pygame.draw.circle(
-                surface = screen,
-                color = tuple(int(c*255) for c in color[:3]),
-                center = (pos + 0.5) * pix_square_size,
-                radius = pix_square_size/3,
-            )
+            if self.agents_done[i]==False:
+                color = colormap(norm(i))
+                x,y = self.__getCoords__(point)
+                pos = np.array([x,y])
+                pygame.draw.circle(
+                    surface = screen,
+                    color = tuple(int(c*255) for c in color[:3]),
+                    center = (pos + 0.5) * pix_square_size,
+                    radius = pix_square_size/3,
+                )
 
         if self.dist_paradigm == 'path':
             for i, path in enumerate(self.agents_path):
-                color = colormap(norm(i))
-                for point in path[1:]:
-                    x,y = self.__getCoords__(point)
-                    pos = np.array([x,y])
-                    pygame.draw.circle(
-                        surface = screen,
-                        #color = tuple(int(c*255) for c in color[:3]),
-                        color = (255,0,0),
-                        center = (pos + 0.5) * pix_square_size,
-                        radius = pix_square_size/7,)
+                if self.agents_done[i]==False:
+                    color = colormap(norm(i))
+                    for point in path[1:]:
+                        x,y = self.__getCoords__(point)
+                        pos = np.array([x,y])
+                        pygame.draw.circle(
+                            surface = screen,
+                            color = tuple(int(c*255) for c in color[:3]),
+                            #color = (255,0,0),
+                            center = (pos + 0.5) * pix_square_size,
+                            radius = pix_square_size/7,)
 
         
 
