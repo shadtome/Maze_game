@@ -1,7 +1,7 @@
 from DQN.models import base
 from DQN.agents import basic
 from DQN.training import basic
-from Maze_env.wrappers.rewards import reward_dist
+from Maze_env.wrappers.reward_wrappers.runner_rewards import reward_dist
 import random
 
 

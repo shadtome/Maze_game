@@ -23,6 +23,12 @@ class Maze_dataset(Dataset):
                         - lattice_dim
                         - accessible_cells
                         - max_tree_depth
+                        - do_forks
+                    - 'dfs_percolation':
+                        - p
+                        - lattice_dim
+                        - accessible_cells
+                        - max_tree_depth
                         - do_forks"""
         self.shape = shape
         self.maze_type = maze_type
@@ -99,8 +105,9 @@ class Maze_dataset(Dataset):
                 do_forks=do_forks,
                 start_coord=None
             )
+            return maze
         if self.maze_type == 'dfs_percolation':
-            p = 0.5
+            p = 0.4
             lattice_dim = 2
             accessible_cells = None
             max_tree_depth = None
@@ -114,17 +121,14 @@ class Maze_dataset(Dataset):
                     accessible_cells = v
                 if k == 'max_tree_depth':
                     max_tree_depth = v
-                if k == 'do_forks':
-                    do_forks = v
             maze = LatticeMazeGenerators.gen_dfs_percolation(
                 grid_shape=shape,
                 p=p,
                 lattice_dim=lattice_dim,
                 accessible_cells=accessible_cells,
-                max_tree_depth=max_tree_depth,
-                do_forks=do_forks
+                max_tree_depth=max_tree_depth
             )
-
+            return maze
     def __len__(self):
         return len(self.mazes)
     
