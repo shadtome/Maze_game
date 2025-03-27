@@ -64,10 +64,10 @@ class BaseTraining:
         self.agents = maze_agent
         
         # -- print rewards function -- #
-        print(self.agents.rewards_dist)
+        print(self.agents.game_info.rewards_dist)
 
         # -- type of objects -- #
-        self.type_of_objects = self.agents.type_of_objects
+        self.type_of_objects = self.agents.game_info.type_of_objects
 
         # The target Q_net
         self.target_Q_net = {}
@@ -372,15 +372,15 @@ class BaseTraining:
 
     def setup_environment(self, maze,init_pos,**kwargs):
         
-        env = gym.make(self.agents.maze_environment,len_game= self.len_game,
+        env = gym.make(self.agents.game_info.maze_environment,len_game= self.len_game,
                         num_objects=self.n_objects,vision_len=self.agents.vision
                             ,maze=maze, render_mode='rgb_array',obs_type = 'spatial',
                             action_type=self.agents.action_type,
                             init_pos = init_pos,
                             dist_paradigm = self.agents.dist_paradigm,
-                            collision_rules = self.agents.collision_rules,
+                            collision_rules = self.agents.game_info.collision_rules,
                             type_of_objects = self.type_of_objects,
-                            objectives = self.agents.objectives,
+                            objectives = self.agents.game_info.objectives,
                             **kwargs)
         
         # --- environment wrappers --- #
@@ -625,7 +625,7 @@ class BaseTraining:
         # --- line plot of scores --- #
         axe[1][1].cla()
         scores_data = []
-        for frame, score in self.scores.items():
+        for frame, score in self.scores[obj_type]:
             scores_data.append({'frame': frame, 'score':score})
         scores_df = pd.DataFrame(scores_data)
         sns.lineplot(data = scores_df, x ='frame',y = 'score',ax = axe[1][1],palette='tab10')

@@ -15,7 +15,6 @@ dependencies:
   - sqlalchemy
   - xgboost>=2.0.3
   - pmdarima>=2.0
-  - beautifulsoup4
   - xmltodict
   - pip:
       - cinemagoer

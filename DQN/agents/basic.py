@@ -10,6 +10,7 @@ import random
 import os
 from Maze_env.reward_functions.basic import BasicRewardFun
 import Maze_env.wrappers.reward_wrappers.runner_rewards as rw
+from Maze_env.game_info.basic_info import basicGame
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 from IPython.display import HTML,display
@@ -26,20 +27,14 @@ baseline_rw = BasicRewardFun()
 class BaseAgent:
     def __init__(self,model,vision,
                  action_type = 'full',
-                 rewards_dist = {'agents':baseline_rw},
                  dist_paradigm = 'radius',
-                 type_of_objects = ['agents'],
-                 collision_rules = None,
-                 objectives = {},
-                 maze_environment = 'Maze_env/BasicMaze-v0',
+                 game_info = basicGame(),
                    **kwargs):
         """Initalize the base agent class, put the vision length to give the agents"""
 
-        # -- maze environment -- #
-        self.maze_environment = maze_environment
+        # -- game info -- #
+        self.game_info = game_info
 
-        # -- type of agents -- #
-        self.type_of_objects = type_of_objects
 
         # -- vision of the agent -- #
         self.vision = vision
@@ -47,14 +42,6 @@ class BaseAgent:
         # -- type of distance to goal -- #
         self.dist_paradigm = dist_paradigm
 
-        # -- rewards distribution -- #
-        self.rewards_dist = rewards_dist
-
-        # -- collision rules -- #
-        self.collision_rules = collision_rules
-
-        # -- objectives -- #
-        self.objectives = objectives
 
         # -- shape of the CNN input -- #
         self.CNN_shape = {}
@@ -73,7 +60,7 @@ class BaseAgent:
         # -- initalize the maze model -- #
         self.maze_model = model
         self.Q_fun = {}
-        for k in type_of_objects:
+        for k in self.game_info.type_of_objects:
             self.Q_fun[k] = self.__init_model__(model[k],self.CNN_shape[k],self.n_actions, **kwargs)
             self.Q_fun[k].to(device.DEVICE)
         
@@ -93,8 +80,8 @@ class BaseAgent:
         self.__pygame_output__ = None
 
     @classmethod
-    def load(cls,name, type_of_objects = ['agents'],collision_rules = None,objectives={},
-             maze_environment='Maze_env/BasicMaze-v0',rewards_cls = BasicRewardFun):
+    def load(cls,name, game_info,rewards_cls = BasicRewardFun,
+             default_rewards_dist = None):
         """Load the agent's model dynamically, supporting inheritance."""
 
         models = {}
@@ -110,7 +97,8 @@ class BaseAgent:
 
 
         # -- Load model hyperparameters -- #
-        for type_object in type_of_objects:
+        
+        for type_object in game_info.type_of_objects:
             object_fd = os.path.join(fd, type_object)
             with open(os.path.join(object_fd, 'model_hyperparameters.json'), 'r') as f:
                 loaded_model_hp = json.load(f)
@@ -122,19 +110,19 @@ class BaseAgent:
             param_load[type_object] = torch.load(os.path.join(object_fd, 'agent.pth'))
 
             # -- Load reward distribution -- #
-            with open(os.path.join(object_fd, 'reward_distribution.json'), 'r') as g:
-                rewards = json.load(g)
-            rewards_dist[type_object] = rewards_cls(**rewards)
-
+            if default_rewards_dist==None:
+                rewards_dist[type_object] = default_rewards_dist[type_object]
+            else:
+                with open(os.path.join(object_fd, 'reward_distribution.json'), 'r') as g:
+                    rewards = json.load(g)
+                rewards_dist[type_object] = rewards_cls(**rewards)
+            game_info.rewards_dist = rewards_dist
             # -- handle additional parameters unkown to this class -- #
             #extra_params = {k: v for k, v in loaded_model_hp.items() if k not in base_params}
-
-        return cls(models=models,visions=visions,action_type=action_type,
-                   rewards_dist = rewards_dist,dist_paradigm=dist_paradigm, 
-                   type_of_objects=type_of_objects,
-                   collision_rules=collision_rules,
-                   objectives = objectives,
-                   maze_environment=maze_environment,
+        
+        return cls(model=models,vision=visions,action_type=action_type,
+                   dist_paradigm = dist_paradigm,
+                   game_info = game_info,
                    load = param_load)
 
     def copy(self):
@@ -144,14 +132,13 @@ class BaseAgent:
         copyAgent = self.__class__(model = self.maze_model,
                                    vision = self.vision,
                                    action_type = self.action_type,
-                                    rewards_dist = self.rewards_dist,
                                     dist_paradigm = self.dist_paradigm, 
-                                    type_of_objects = self.type_of_objects, 
-                                    objectives = self.objectives,
-                                    collision_rules = self.collision_rules,
-                                    maze_environment = self.maze_environment,
+                                    game_info = self.game_info,
                                     load = load)
         return copyAgent
+    
+    def set_game(self,game_info):
+        self.game_info = game_info
         
     def __init_model__(self, maze_model,CNN_shape,n_actions, **kwargs):
         return maze_model(CNN_shape,n_actions)
@@ -211,7 +198,7 @@ class BaseAgent:
                     a Q-network action"""
         
         actions = {}
-        for obj_type in self.type_of_objects:
+        for obj_type in self.game_info.type_of_objects:
             action = []
             for a in range(num_objects[obj_type]):
                 action.append(self.get_single_agent_action(env,state,a,info,epsilon,obj_type))  
@@ -240,7 +227,7 @@ class BaseAgent:
         return action_probs
     
     def __make_env__(self,len_game,num_objects,maze,init_pos,start_dist,render_mode = 'rgb_array'):
-        env = gym.make(self.maze_environment,
+        env = gym.make(self.game_info.maze_environment,
                            len_game = len_game,
                            num_objects=num_objects,
                            vision_len=self.vision,maze=maze,
@@ -248,10 +235,10 @@ class BaseAgent:
                            action_type = self.action_type, 
                            init_pos = init_pos,
                            start_dist = start_dist,
-                           collision_rules = self.collision_rules,
+                           collision_rules = self.game_info.collision_rules,
                            dist_paradigm = self.dist_paradigm,
-                           type_of_objects = self.type_of_objects,
-                           objectives = self.objectives)
+                           type_of_objects = self.game_info.type_of_objects,
+                           objectives = self.game_info.objectives)
 
         env = self.add_wrappers(env)
         return env
@@ -299,7 +286,7 @@ class BaseAgent:
         
         # -- save agents perspective for viewing later -- #
         objects_per = {}
-        for object in self.type_of_objects:
+        for object in self.game_info.type_of_objects:
             self.Q_fun[object].eval()
         with torch.no_grad():
             # -- make environment -- #
@@ -309,11 +296,11 @@ class BaseAgent:
             for i in range(n_episodes):
                 obs, info = env.reset()
                 # -- get the objects initial perspective -- #
-                for object in self.type_of_objects:
+                for object in self.game_info.type_of_objects:
                     for a in range(num_objects[object]):
                         objects_per[object + f'_{a}'] = [obs[object][f'local_{a}']]
                 done = False
-                cum_reward={object:[0 for _ in range(num_objects[object])] for object in self.type_of_objects}
+                cum_reward={object:[0 for _ in range(num_objects[object])] for object in self.game_info.type_of_objects}
                 frame = 0
                 # Play
                 while not done:
@@ -323,7 +310,7 @@ class BaseAgent:
                     # -- get next observations -- #
                     next_obs, reward, terminated, truncated, next_info = env.step(actions)
                     
-                    for object in self.type_of_objects:
+                    for object in self.game_info.type_of_objects:
                         for a in range(num_objects[object]):
                             objects_per[object + f'_{a}'].append(next_obs[object][f'local_{a}'])
                             cum_reward[object][a] += reward[object][a]
@@ -348,14 +335,14 @@ class BaseAgent:
         """This evaluates how good the agent is at random maze levels
             Returns the ratio completed episodes/total number of episodes""" 
         total_completed = {}
-        for obj_type in self.type_of_objects:
+        for obj_type in self.game_info.type_of_objects:
             total_completed[obj_type] = [0 for _ in range(num_objects[obj_type])]
         ep = 0
         # -- go through the number of episodes and enact the environment -- #
         while ep < n_episodes:
             id_x = random.choice(range(len(maze_dataset)))
             maze = maze_dataset[id_x]
-            for object in self.type_of_objects:
+            for object in self.game_info.type_of_objects:
                 self.Q_fun[object].eval()
             with torch.no_grad():
                 # -- make environment -- #
@@ -379,23 +366,23 @@ class BaseAgent:
                     obs = next_obs
                     info = next_info
                     
-                    for obj_type in self.type_of_objects: 
-                        
-                        for a in range(num_objects[obj_type]):
-                            if info[obj_type + f'_{a}']['success']:
-                                total_completed[obj_type][a]+=1/n_episodes
+                for obj_type in self.game_info.type_of_objects: 
+                    
+                    for a in range(num_objects[obj_type]):
+                        if info[obj_type + f'_{a}']['success']:
+                            total_completed[obj_type][a]+=1/n_episodes
                         
                 env.close()
                 ep +=1
-        for obj_type in self.type_of_objects:
+        for obj_type in self.game_info.type_of_objects:
             total_completed[obj_type] = np.mean(total_completed[obj_type])
         return total_completed
     
 
     def make_gif(self,name,maze_dataset, len_game = 50, n_episodes = 1, num_objects = {'agents': 1},
-                 epsilon = 0,init_pos = None, start_dist = None,frame_rate=10):
+                 epsilon = 0,init_pos = {}, start_dist = None,frame_rate=10):
         
-        for object in self.type_of_objects:
+        for object in self.game_info.type_of_objects:
             self.Q_fun[object].eval()
 
         with torch.no_grad():
@@ -463,10 +450,8 @@ class BaseAgent:
             'vision': self.vision[type_object],
             'action_type': self.action_type,
             'dist_paradigm':self.dist_paradigm,
-            'maze_environment':self.maze_environment,
-            'collision_rules':self.collision_rules,
-            'objectives':self.objectives
-        }        
+            'game_name': self.game_info.name
+            }        
             return model_param
 
     def save(self,name):
@@ -480,7 +465,7 @@ class BaseAgent:
         fd = os.path.join(fd,f'{name}')
         if os.path.exists(fd)==False:
             os.mkdir(fd)
-        for object in self.type_of_objects:
+        for object in self.game_info.type_of_objects:
             # -- save the agent model -- #
             object_fd = os.path.join(fd,object)
             if os.path.exists(object_fd)==False:
@@ -493,7 +478,7 @@ class BaseAgent:
             with open(os.path.join(object_fd,'model_hyperparameters.json'),'w') as f:
                 json.dump(object_model_param, f, indent=4)
         
-            reward_structure = self.rewards_dist[object].rewards
+            reward_structure = self.game_info.rewards_dist[object].rewards
             reward_structure['WALL'] = Maze_env.env.mazes.WALL
             reward_structure['DO_ACTION'] = Maze_env.env.mazes.DO_ACTION
         

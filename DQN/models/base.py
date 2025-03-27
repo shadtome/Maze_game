@@ -104,6 +104,11 @@ class CNN_version1(AgentNN):
             nn.Linear(12,self.n_actions)
         ) 
 
+    def freeze_base(self,freeze=False):
+        for param in self.CNN_function.parameters():
+            param.requires_grad=freeze
+
+
     def forward(self,x,y):
         
         x = self.CNN_function(x)
@@ -156,15 +161,42 @@ class CNN_version2(AgentNN):
 
     
 class MultiHead(AgentNN):
-    def __init__(self,state_shape,n_actions,n_heads = 1):
-        """Mutlihead neural network based on level"""
+    def __init__(self,state_shape,n_actions,current_game = None):
+        """MultiHead Agent Based on its Task"""
         super().__init__('MultiHead',state_shape,n_actions)
-        self.n_heads = n_heads
+        self.current_game = current_game
+        self.base= None
+        self.heads = {}
+
+    def set_game(self,game):
+        """Set the current mode for the agent"""
+        if game not in self.heads:
+            raise ValueError(f'Invalid mode {game}')
+        self.current_game = game
+
+    def forward(self,x,y):
+
+        x = self.base(x)
+        combined = torch.cat((x,y),dim=-1)
+        result = self.heads[self.current_game](combined)
+        return result
+    
+    def freeze_base(self,freeze=False):
+        for param in self.base.parameters():
+            param.requires_grad=freeze
+        
+    
+    def __getParams__(self):
+        params = super().__getParams__()
+        params['current_game'] = self.current_game
+        return params
+    
+class MH_CNN(MultiHead):
+    def __init__(self, state_shape, n_actions,current_game=None):
         h = state_shape[1]
         w = state_shape[2]
+        super().__init__(state_shape, n_actions,current_game)
 
-
-       
         self.base= nn.Sequential(
             nn.Conv2d(in_channels=3,out_channels=32,kernel_size=3,stride=2),
             nn.ReLU(),
@@ -174,48 +206,31 @@ class MultiHead(AgentNN):
             nn.Linear(64*int((h-3)/2)*int((w-3)/2),32),
             nn.ReLU(),
         )
-
-        self.combine_base =nn.Sequential(
+        
+        goal_head = nn.Sequential(
             nn.Linear(32 + 4,32),
             nn.ReLU(),
             nn.Linear(32,12),
-            nn.ReLU()
-        ) 
-
-        self.heads = []
-        for i in range(n_heads):
-            self.heads.append(nn.Linear(12,n_actions))
-
-    def forward(self,x,y,head):
-        if isinstance(head,int):
-            head = [head]
-
-        x = self.base(x)
-        batch_size = x.size(0)
-        combined = torch.cat((x,y),dim=-1)
-        result = self.combine_base(combined)
+            nn.ReLU(),
+            nn.Linear(12,n_actions)
+        )
         
-        selected_outputs = []
-        for i in range(batch_size):
-            if head[i]>=self.n_heads:
-                selected_head = self.heads[-1]
-            else:
-                selected_head = self.heads[head[i]]
-            selected_output = selected_head(result[i])  
-            selected_outputs.append(selected_output)
+        hunger_games_head = nn.Sequential(
+            nn.Linear(32 + 4,32),
+            nn.ReLU(),
+            nn.Linear(32,12),
+            nn.ReLU(),
+            nn.Linear(12,n_actions)
+        )
 
-        return torch.stack(selected_outputs)
-    
-    def __getParams__(self):
-        params = super().__getParams__()
-        params['n_heads'] = self.n_heads
-        return params
-    
+        self.heads['Maze Runner'] = goal_head
+        self.heads['Hunger Games'] = hunger_games_head
 
 metadata = {
     'CNN_Basic' : CNN_Basic,
     'basic_NN': basic_NN,
     'CNN_version1': CNN_version1,
     'CNN_version2': CNN_version2,
-    'MultiHead': MultiHead
+    'MultiHead': MultiHead,
+    'MH_CNN': MH_CNN
 }
