@@ -23,6 +23,8 @@ class HungerGamesRewards(MazeRunnerRewards):
                 # -- discourge getting closer to other agents -- #
                 if index_agent!=1000:
                     reward[object][k] += self.rewards_dist[object]['TOO_CLOSE_CONSTANT'] + self.rewards_dist[object]['TOO_CLOSE']/(1 + index_agent)
+                else:
+                    reward[object][k] += self.rewards_dist[object]['NO_NEIGHBORS']
 
                 if info[object + f'_{k}']['dead']:
                     reward[object][k] += self.rewards_dist[object]['HIT_OTHER']

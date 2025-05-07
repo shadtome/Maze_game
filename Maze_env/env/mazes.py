@@ -52,6 +52,8 @@ class BasicMaze(gym.Env):
                         otherwise,, you can input a list of the target's position"""
         super(BasicMaze, self).__init__()
 
+        # -- team colors -- #
+        self.team_colors = ["Greys","Blues", "Reds", "Greens", "Purples", "Oranges"]
         
         # --- window size for pygame output --- #
         self.window_size = 512 
@@ -89,6 +91,9 @@ class BasicMaze(gym.Env):
         self.dead = {}
         self.success = {}
         self.path = {}
+
+        # -- game object mappings -- #
+        self.vision_mapping = {'nothing': 0 , 'wall': 1, 'other': 2, 'goal':3}
         
 
         # -- start distance -- #
@@ -139,19 +144,19 @@ class BasicMaze(gym.Env):
         elif self.obs_type == 'spatial':
             obs = dict()
             max_pos = self.n_rows*self.n_cols-1
-            for object in self.type_of_objects:
+            for obj in self.type_of_objects:
                 obs_objects = dict()
-                for a in range(self.num_objects[object]):
+                for a in range(self.num_objects[obj]):
                     
                     obs_objects[f'local_{a}'] = gym.spaces.Box(low=0,
                                                     high=255,
-                                                    shape = (2*self.vision_len['agents'] + 1,2*self.vision_len['agents']+1,3),
+                                                    shape = (2*self.vision_len[obj] + 1,2*self.vision_len[obj]+1,3),
                                                     dtype=int)
                     obs_objects[f'global_{a}'] = gym.spaces.Box(low=np.array([0,0,0,0]),
                                                         high=np.array([max_pos,max_pos,1,self.n_cols + self.n_rows]),
                                                         shape=(4,),
                                                         dtype=int)
-                obs[object] = gym.spaces.Dict(obs_objects)
+                obs[obj] = gym.spaces.Dict(obs_objects)
             self.observation_space = gym.spaces.Dict(obs)
         
 
@@ -199,6 +204,29 @@ class BasicMaze(gym.Env):
         y_pos = pos // self.n_cols
         return x_pos,y_pos
 
+    def __place_value__(self,val,alpha,beta,diag = False):
+    
+            if val == self.vision_mapping['nothing'] and diag == False:
+                return [int(255* beta),int(255* beta),int(255* beta)]
+            elif val == self.vision_mapping['other'] and diag == False:
+                return [int(255* beta),0,0]
+
+            if val == self.vision_mapping['nothing'] and diag:
+                return [int(255*alpha*beta),int(255*alpha*beta),int(255*alpha*beta)]
+            elif val == self.vision_mapping['other'] and diag:
+                return [int(255*alpha*beta),0,0]
+            else:
+                return [0,0,0]
+            
+    def __place_center_value__(self,val):
+        """ places the center value of the agent"""
+        if val == self.vision_mapping['nothing']:
+            return [0,0,255]
+        elif val == self.vision_mapping['other']:
+            return [255,0,0]
+        else:
+            return [0,0,0]
+        
     def __spatial__(self, a,type_object):
         """ gets the spatial information for the agent, which includes the local rgb information"""
         
@@ -208,81 +236,44 @@ class BasicMaze(gym.Env):
         spatial = np.zeros(shape=(grid_size,grid_size,3),dtype=int)
         x = self.vision_len[type_object]
         y = self.vision_len[type_object]
+
+        alpha = 0.3
+        beta = 0.99
         
         # CENTER 
-        if vision['CENTER'][0]==0:
-            spatial[y][x][0] = 0
-            spatial[y][x][1] = 0
-            spatial[y][x][2] = 255
-        elif vision['CENTER'][0]==2:
-            spatial[y][x][0] = 255
-            spatial[y][x][1] = 0
-            spatial[y][x][2] = 0
-        elif vision['CENTER'][0]==3:
-            spatial[y][x][0] = 0
-            spatial[y][x][1] = 255
-            spatial[y][x][2] = 0
-
-        def place_value(val,x,y,dist,diag = False):
-            alpha = 0.3
-            beta = 0.99/dist
-            if val == 0 and diag == False:
-                spatial[y][x][0] = int(255* beta)
-                spatial[y][x][1] = int(255* beta)
-                spatial[y][x][2] = int(255* beta)
-            elif val == 2 and diag == False:
-                spatial[y][x][0] = int(255* beta)
-                spatial[y][x][1] = 0
-                spatial[y][x][2] = 0
-            elif val == 3 and diag == False:
-                spatial[y][x][0] = 0
-                spatial[y][x][1] = int(255* beta)
-                spatial[y][x][2] = 0
-
-            if val == 0 and diag:
-                spatial[y][x][0] = int(255*alpha*beta)
-                spatial[y][x][1] = int(255*alpha*beta)
-                spatial[y][x][2] = int(255*alpha*beta)
-            elif val == 2 and diag:
-                spatial[y][x][0] = int(255*alpha*beta)
-                spatial[y][x][1] = 0
-                spatial[y][x][2] = 0
-            elif val == 3 and diag:
-                spatial[y][x][0] = 0
-                spatial[y][x][1] = int(255*alpha*beta)
-                spatial[y][x][2] = 0
+        spatial[y][x] = self.__place_center_value__(vision['CENTER'][0])
         
         # UP 
         for i,val in enumerate(vision['UP']):
-            place_value(val,x,y-(i+1),i+1)
+            spatial[y-(i+1)][x] = self.__place_value__(val,alpha,beta/(i+1))
         
         # DOWN 
         for i,val in enumerate(vision['DOWN']):
-            place_value(val,x,y+(i+1),i+1)
+            spatial[y+(i+1)][x] = self.__place_value__(val,alpha,beta/(i+1))
 
         # LEFT 
         for i,val in enumerate(vision['LEFT']):
-            place_value(val,x - (i+1),y,i+1)
+            spatial[y][x-(i+1)] = self.__place_value__(val,alpha,beta/(i+1))
 
         # RIGHT
         for i,val in enumerate(vision['RIGHT']):
-            place_value(val,x + (i+1),y,i+1)
+            spatial[y][x + (i+1)] = self.__place_value__(val,alpha,beta/(i+1))
 
         # UP LEFT
         for i,val in enumerate(vision['UP_LEFT']):
-            place_value(val, x-(i+1),y-(i+1),i+1,True)
+            spatial[y-(i+1)][x-(i+1)] = self.__place_value__(val,alpha,beta/(i+1),True)
         
         # UP RIGHT
         for i,val in enumerate(vision['UP_RIGHT']):
-            place_value(val, x+(i+1),y-(i+1),i+1,True)
+            spatial[y-(i+1)][x+(i+1)] = self.__place_value__(val,alpha,beta/(i+1),True)
 
         # DOWN LEFT
         for i,val in enumerate(vision['DOWN_LEFT']):
-            place_value(val, x-(i+1),y+(i+1),i+1,True)
+            spatial[y+(i+1)][x-(i+1)] = self.__place_value__(val,alpha,beta/(i+1),True)
 
         # DOWN RIGHT
         for i,val in enumerate(vision['DOWN_RIGHT']):
-            place_value(val, x+(i+1),y+(i+1),i+1,True)
+            spatial[y+(i+1)][x+(i+1)] = self.__place_value__(val,alpha,beta/(i+1),True)
         
             
         return spatial      
@@ -451,6 +442,12 @@ class BasicMaze(gym.Env):
         x_2,y_2 = self.__getCoords__(point2)
         return abs(x_1 - x_2) + abs(y_1 - y_2)
 
+    def __what_they_see__(self,pos,pos_set,type_object,a):
+        if pos in pos_set:
+            return self.vision_mapping['other']
+        else:
+            return self.vision_mapping['nothing']
+
     def __get_vision__(self,a,type_object):
         """ gets the vision of the agent"""
 
@@ -477,29 +474,24 @@ class BasicMaze(gym.Env):
         # going left: pos - 1
         
         vision = {}
-        positions = self.pos[type_object].copy()
+        positions = self.pos.copy()
         
-        pos = positions[a]
+        pos = positions[type_object][a]
         
         # agents that are not done
-        not_done = np.where(np.array(self.done[type_object]) == False)[0]
+        not_done = {}
+        for obj in self.type_of_objects:
+            not_done[obj] = np.where(np.array(self.done[obj]) == False)[0]
         
         
-        
-        pos_set = {positions[i] for i in not_done }
-        
-        if type_object + '_goals' in self.pos:
-            goals = self.pos[type_object + '_goals'][a]
-        else:
-            goals = -1
+        pos_set = set()
+        for obj in self.type_of_objects:
+            pos_set = pos_set | {positions[obj][i] for i in not_done[obj] }
 
         # CENTER 
-        center_vision = [0]
+        center_vision = []
         other_pos = pos_set - {pos}
-        if pos in other_pos:
-            center_vision[0]=2
-        elif pos == goals:
-            center_vision[0] = 3
+        center_vision.append(self.__what_they_see__(pos,other_pos,type_object,a))
         vision['CENTER'] = center_vision
         
         # UP
@@ -514,12 +506,7 @@ class BasicMaze(gym.Env):
                 break
             pos_temp -= n_cols
             if v == False: # This means that there is not a wall here, so either this is another agent or goal
-                if pos_temp in pos_set:
-                    up_vision.append(2)
-                elif  pos_temp == goals:
-                    up_vision.append(3)
-                else:
-                    up_vision.append(0)
+                up_vision.append(self.__what_they_see__(pos_temp,pos_set,type_object,a))
             
         vision['UP'] = up_vision
 
@@ -535,12 +522,7 @@ class BasicMaze(gym.Env):
                 break
             pos_temp += n_cols
             if v == False: # This means that there is not a wall here, so either this is another agent or goal
-                if pos_temp in pos_set:
-                    down_vision.append(2)
-                elif pos_temp == goals:
-                    down_vision.append(3)
-                else:
-                    down_vision.append(0)
+                down_vision.append(self.__what_they_see__(pos_temp,pos_set,type_object,a))
             
         vision['DOWN'] = down_vision
 
@@ -556,12 +538,7 @@ class BasicMaze(gym.Env):
                 break
             pos_temp -= 1
             if v == False: # This means that there is not a wall here, so either this is another agent or goal
-                if pos_temp in pos_set:
-                    left_vision.append(2)
-                elif pos_temp ==  goals:
-                    left_vision.append(3)
-                else:
-                    left_vision.append(0)
+                left_vision.append(self.__what_they_see__(pos_temp,pos_set,type_object,a))
             
         vision['LEFT'] = left_vision
 
@@ -577,12 +554,7 @@ class BasicMaze(gym.Env):
                 break
             pos_temp +=1
             if v == False: # This means that there is not a wall here, so either this is another agent or goal
-                if pos_temp in pos_set:
-                    right_vision.append(2)
-                elif pos_temp == goals:
-                    right_vision.append(3)
-                else:
-                    right_vision.append(0)
+                right_vision.append(self.__what_they_see__(pos_temp,pos_set,type_object,a))
             
         vision['RIGHT'] = right_vision
 
@@ -600,12 +572,7 @@ class BasicMaze(gym.Env):
                 break
             pos_temp = pos_temp -1 - n_cols
             if v == False: # This means that there is not a wall here, so either this is another agent or goal
-                if pos_temp in pos_set:
-                    up_left_vision.append(2)
-                elif pos_temp == goals:
-                    up_left_vision.append(3)
-                else:
-                    up_left_vision.append(0)
+                up_left_vision.append(self.__what_they_see__(pos_temp,pos_set,type_object,a))
             
         vision['UP_LEFT'] = up_left_vision
 
@@ -623,12 +590,7 @@ class BasicMaze(gym.Env):
                 break
             pos_temp = pos_temp - n_cols +1
             if v == False: # This means that there is not a wall here, so either this is another agent or goal
-                if pos_temp in pos_set:
-                    up_right_vision.append(2)
-                elif pos_temp == goals:
-                    up_right_vision.append(3)
-                else:
-                    up_right_vision.append(0)
+                up_right_vision.append(self.__what_they_see__(pos_temp,pos_set,type_object,a))
             
         vision['UP_RIGHT'] = up_right_vision
 
@@ -646,12 +608,7 @@ class BasicMaze(gym.Env):
                 break
             pos_temp  = pos_temp +n_cols -1
             if v == False: # This means that there is not a wall here, so either this is another agent or goal
-                if pos_temp in pos_set:
-                    down_left_vision.append(2)
-                elif pos_temp == goals:
-                    down_left_vision.append(3)
-                else:
-                    down_left_vision.append(0)
+                down_left_vision.append(self.__what_they_see__(pos_temp,pos_set,type_object,a))
             
         vision['DOWN_LEFT'] = down_left_vision
 
@@ -669,12 +626,7 @@ class BasicMaze(gym.Env):
                 break
             pos_temp = pos_temp + n_cols + 1
             if v == False: # This means that there is not a wall here, so either this is another agent or goal
-                if pos_temp in pos_set:
-                    down_right_vision.append(2)
-                elif pos_temp == goals:
-                    down_right_vision.append(3)
-                else:
-                    down_right_vision.append(0)
+                down_right_vision.append(self.__what_they_see__(pos_temp,pos_set,type_object,a))
             
         vision['DOWN_RIGHT'] = down_right_vision
 
@@ -842,17 +794,9 @@ class BasicMaze(gym.Env):
 
     def __is_done__(self,type_object,pos,index):
         """ checks if the agent is done based on a variety of conditions\n
-        1. If the agent has reached its goal\n
-        \n
         Can be easily extended through inheritence"""
         # -- if the object has a end goal check if they reached it -- #
-        if type_object + '_goals' in self.pos:
-            if self.pos[type_object][index]==self.pos[type_object + '_goals'][index]:
-                    self.done[type_object][index] = True 
-                    self.success[type_object][index]=True 
-            else:
-                # -- if the object has a end goal, find its minimal path -- #
-                self.path[type_object][index] = self.__get_path__(pos,self.pos[type_object + '_goals'][index])
+        return 
         
         
 
@@ -1011,12 +955,12 @@ class BasicMaze(gym.Env):
                                      end_pos=(x+square_size,y+square_size),width=5)
                     
     def __add_object_to_env__(self,type_object,screen,pix_square_size):
-        norm = Normalize(vmin=0,vmax=self.num_objects[type_object]-1)
+        norm = Normalize(vmin=0,vmax=self.num_objects[type_object])
         colormap = plt.cm.get_cmap(self.colormap[type_object],self.num_objects[type_object])
         # Draw the agents
         for i, point in enumerate(self.pos[type_object]):
             if self.done[type_object][i]==False:
-                color = colormap(norm(i))
+                color = self.__get_color__(colormap,norm,i,type_object)
                 x,y = self.__getCoords__(point)
                 pos = np.array([x,y])
                 pygame.draw.circle(
@@ -1028,6 +972,14 @@ class BasicMaze(gym.Env):
     def __add_to_env__(self,type_object,screen,pix_square_size):
         self.__draw_maze__(screen,pix_square_size)
         self.__add_object_to_env__(type_object,screen,pix_square_size)
+
+    def __get_color__(self,colormap,norm,index,type_object):
+        
+        if self.colormap[type_object] in self.team_colors:
+            return colormap(1)
+        else:
+            return colormap(norm(index))
+        
                             
     def close(self):
         if self.window is not None:

@@ -10,6 +10,10 @@ class HungerGamesRewardsFun(MazeRunnerRewardsFun):
         rewards = {
             'HIT_OTHER': -1.0,
             'TOO_CLOSE': -0.0,
-            'TOO_CLOSE_CONSTANT': -0.0
+            'TOO_CLOSE_CONSTANT': -0.0,
+            'NO_NEIGHBORS': -0.0,
         }
         return rewards | super().__setup__()
+    
+    def __str__(self):
+        return super().__str__()

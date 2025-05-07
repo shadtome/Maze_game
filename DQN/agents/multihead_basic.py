@@ -25,6 +25,7 @@ class MultiHeadAgent(BaseAgent):
         for obj_type in game_info.type_of_objects:
             self.Q_fun[obj_type].set_game(game_info.name)
 
+
     def add_wrappers(self, env):
         env = self.game_info.add_wrapper(env)
         return super().add_wrappers(env)

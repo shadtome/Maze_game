@@ -43,7 +43,7 @@ class MazeRunnerRewards(Wrapper):
                         self.objects_past[object + f'_{k}'][pos]+=1
                         reward[object][k]+=self.rewards_dist[object]['OLD_PLACE']* float(self.objects_past[object + f'_{k}'][pos])
 
-                    # --- check neighborhoods for goals and other agents --- #
+                    # --- check neighborhoods for goals  --- #
                     index_goal = -1
                     for d in ['CENTER','UP', 'DOWN','LEFT','RIGHT','UP_LEFT','UP_RIGHT','DOWN_LEFT','DOWN_RIGHT']:
                         try:
@@ -69,7 +69,8 @@ class MazeRunnerRewards(Wrapper):
 
 
                     # --- reward for arriving at the goal --- #
-                    if pos==t_pos and agent_done and info[object + f'_{k}']['dead']==False:
+                    if info[object + f'_{k}']['success']:
+                        
                         reward[object][k] += self.rewards_dist[object]['GOAL']
 
                     #reward[k] = np.clip(reward[k],-1,1)

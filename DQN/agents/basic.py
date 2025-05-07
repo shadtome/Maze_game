@@ -110,7 +110,7 @@ class BaseAgent:
             param_load[type_object] = torch.load(os.path.join(object_fd, 'agent.pth'))
 
             # -- Load reward distribution -- #
-            if default_rewards_dist==None:
+            if default_rewards_dist!=None:
                 rewards_dist[type_object] = default_rewards_dist[type_object]
             else:
                 with open(os.path.join(object_fd, 'reward_distribution.json'), 'r') as g:
@@ -124,6 +124,15 @@ class BaseAgent:
                    dist_paradigm = dist_paradigm,
                    game_info = game_info,
                    load = param_load)
+    
+    def load_object(self,obj_type,name,file_obj_name):
+        """ This is used to load in the parameters for a certain object"""
+        fd = os.getcwd()
+        fd = os.path.join(fd, 'trained_agents', name)
+        object_fd = os.path.join(fd, file_obj_name)
+        param_load = torch.load(os.path.join(object_fd, 'agent.pth'))
+
+        self.Q_fun[obj_type].load_state_dict(param_load)
 
     def copy(self):
         load = {}
@@ -183,9 +192,10 @@ class BaseAgent:
     def add_wrappers(self, env):
         """Add wrappers into the enviroment\n
         Mean to be changed for inheritence"""
+        env = self.game_info.add_wrapper(env)
         return env
 
-    def get_action(self,env,num_objects,state,info,epsilon=0.0):
+    def get_action(self,env,num_objects,state,info,epsilon=0.0,training_on=None):
         """ Get the actions from each agent from the state
 
             env: the environment the agent is in.
@@ -196,12 +206,15 @@ class BaseAgent:
 
             epsilon: the probability of taking a random action vs 1-epsilon to take 
                     a Q-network action"""
-        
+
         actions = {}
         for obj_type in self.game_info.type_of_objects:
             action = []
             for a in range(num_objects[obj_type]):
-                action.append(self.get_single_agent_action(env,state,a,info,epsilon,obj_type))  
+                if training_on == None or training_on[obj_type]==True:
+                    action.append(self.get_single_agent_action(env,state,a,info,epsilon,obj_type)) 
+                else:
+                    action.append(self.get_single_agent_action(env,state,a,info,0,obj_type)) 
             actions[obj_type] = action     
         return actions
     
@@ -238,7 +251,8 @@ class BaseAgent:
                            collision_rules = self.game_info.collision_rules,
                            dist_paradigm = self.dist_paradigm,
                            type_of_objects = self.game_info.type_of_objects,
-                           objectives = self.game_info.objectives)
+                           objectives = self.game_info.objectives,
+                           colormap = self.game_info.colormap)
 
         env = self.add_wrappers(env)
         return env

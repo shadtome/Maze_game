@@ -60,14 +60,22 @@ class BaseTraining:
         self.lr_step_size = lr_step_size
         self.lr_gamma = lr_gamma
 
+
         # The agent with the Q_function
         self.agents = maze_agent
-        
-        # -- print rewards function -- #
-        print(self.agents.game_info.rewards_dist)
 
         # -- type of objects -- #
         self.type_of_objects = self.agents.game_info.type_of_objects
+
+        # -- print rewards function -- #
+        for obj in self.type_of_objects:
+            print(f'Reward Distribution for object {obj}')
+            print(self.agents.game_info.rewards_dist[obj])
+
+        # -- training on or off -- #
+        self.training_on = {}
+        for k in self.type_of_objects:
+            self.training_on[k] = True
 
         # The target Q_net
         self.target_Q_net = {}
@@ -185,6 +193,14 @@ class BaseTraining:
     
     def __setup_lr_scheduler__(self,optimizer,step_size,gamma, **kwargs):
         return BasicHeadLR(optimizer,step_size,gamma)
+    
+    def training_toggle_off(self,obj_types: list):
+        for obj in obj_types:
+            self.training_on[obj] = False
+            del self.optimizer[obj]
+            del self.scheduler[obj]
+            del self.replay_buffer[obj]
+            del self.target_Q_net[obj]
 
     def soft_update(self,tau,obj_type):
         """ Used to update the current target Q-network by the policy Q-network by a weighted sum:
@@ -381,6 +397,7 @@ class BaseTraining:
                             collision_rules = self.agents.game_info.collision_rules,
                             type_of_objects = self.type_of_objects,
                             objectives = self.agents.game_info.objectives,
+                            colormap = self.agents.game_info.colormap,
                             **kwargs)
         
         # --- environment wrappers --- #
@@ -444,13 +461,12 @@ class BaseTraining:
         # -- levels of the epsilon -- #
         epsilon = self.epsilonScheduler.epsilon
         # --- get action --- #
-        actions = self.agents.get_action(env,self.n_objects,state,info,epsilon)
+        actions = self.agents.get_action(env,self.n_objects,state,info,epsilon,self.training_on)
         
 
         # --- save actions for results --- #
         for obj_type in self.type_of_objects:
             self.actions_taken[obj_type].append(actions[obj_type])
-
         return actions
     
     def test_success_rate(self,frame,**kwargs):
@@ -528,18 +544,19 @@ class BaseTraining:
                 
                 # --- save each of the agents state, rewards, ect.. --- #
                 for obj_type in self.type_of_objects:
-                    for a in range(self.n_objects[obj_type]):
+                    if self.training_on[obj_type]:
+                        for a in range(self.n_objects[obj_type]):
 
-                        # --- add experience to replay buffer --- #
-                        self.append_to_RB(state[obj_type][f'local_{a}'],state[obj_type][f'global_{a}'],actions[obj_type][a],
-                                                next_state[obj_type][f'local_{a}'],next_state[obj_type][f'global_{a}'],
-                                                reward[obj_type][a],terminated,next_info[obj_type + f'_{a}'],a,obj_type)
-                        
-                        # --- accumulate rewards --- #
-                        cum_reward[obj_type][a] += reward[obj_type][a]
-                        
-                        # --- record agent's rewards --- #
-                        self.cum_reward[obj_type+f'_{a}'].append(cum_reward[obj_type][a])
+                            # --- add experience to replay buffer --- #
+                            self.append_to_RB(state[obj_type][f'local_{a}'],state[obj_type][f'global_{a}'],actions[obj_type][a],
+                                                    next_state[obj_type][f'local_{a}'],next_state[obj_type][f'global_{a}'],
+                                                    reward[obj_type][a],terminated,next_info[obj_type + f'_{a}'],a,obj_type)
+                            
+                            # --- accumulate rewards --- #
+                            cum_reward[obj_type][a] += reward[obj_type][a]
+                            
+                            # --- record agent's rewards --- #
+                            self.cum_reward[obj_type+f'_{a}'].append(cum_reward[obj_type][a])
                     
                 # -- next state --- #
                 state = next_state
@@ -551,12 +568,15 @@ class BaseTraining:
                 # --- replay buffer is filled up to a point --- #
                 len_replay_buffer = 0
                 for obj_type in self.type_of_objects:
-                    len_replay_buffer = len(self.replay_buffer[obj_type])
+                    if self.training_on[obj_type]==True:
+                        len_replay_buffer += len(self.replay_buffer[obj_type])
+                len_replay_buffer = len_replay_buffer
                 if len_replay_buffer>=int(self.replay_buffer_size * self.replay_buffer_min_perc):
                     start_updating = True
 
                 for obj_type in self.type_of_objects:
-                    self.update_networks(start_updating,frame,obj_type)
+                    if self.training_on[obj_type]:
+                        self.update_networks(start_updating,frame,obj_type)
 
                 frame+=1
 
@@ -678,16 +698,17 @@ class BaseTraining:
             os.mkdir(fd_best)
 
         for obj_type in self.type_of_objects:
-            fig, axe = plt.subplots(self.n_objects[obj_type]+2,2,figsize=(10,10))
-            
-            self.update_plots(self.n_frames,fig,axe,obj_type)
+            if self.training_on[obj_type]:
+                fig, axe = plt.subplots(self.n_objects[obj_type]+2,2,figsize=(10,10))
+                
+                self.update_plots(self.n_frames,fig,axe,obj_type)
 
-            obj_fd_original = os.path.join(fd_original,obj_type)
-            obj_fd_best = os.path.join(fd_best,obj_type)
-            
-            
-            plt.savefig(os.path.join(obj_fd_original,'results.png'))
-            plt.savefig(os.path.join(obj_fd_best,'results.png'))
+                obj_fd_original = os.path.join(fd_original,obj_type)
+                obj_fd_best = os.path.join(fd_best,obj_type)
+                
+                
+                plt.savefig(os.path.join(obj_fd_original,'results.png'))
+                plt.savefig(os.path.join(obj_fd_best,'results.png'))
 
 
     def dist_rewards(self,dist):
@@ -734,7 +755,8 @@ class BaseTraining:
 
         # --- next, save the best agent model --- #
         for obj_type in self.type_of_objects:
-            self.best_objects[obj_type].save(self.name + '_best')
+            if self.training_on[obj_type]:
+                self.best_objects[obj_type].save(self.name + '_best')
 
         # --- next save the hyperparameters --- #
         fd = os.getcwd()
@@ -755,14 +777,15 @@ class BaseTraining:
         self.epsilonScheduler.save(fd_original)
         self.epsilonScheduler.save(fd_best)
         for obj_type in self.type_of_objects:
-            object_fd_original = os.path.join(fd_original,obj_type)
-            object_fd_best = os.path.join(fd_best,obj_type)
-            if os.path.exists(object_fd_original)==False:
-                os.mkdir(object_fd_original)
-            if os.path.exists(object_fd_best)==False:
-                os.mkdir(object_fd_best)
-            self.scheduler[obj_type].save(object_fd_original)
-            self.scheduler[obj_type].save(object_fd_best)
+            if self.training_on[obj_type]:
+                object_fd_original = os.path.join(fd_original,obj_type)
+                object_fd_best = os.path.join(fd_best,obj_type)
+                if os.path.exists(object_fd_original)==False:
+                    os.mkdir(object_fd_original)
+                if os.path.exists(object_fd_best)==False:
+                    os.mkdir(object_fd_best)
+                self.scheduler[obj_type].save(object_fd_original)
+                self.scheduler[obj_type].save(object_fd_best)
 
         # now to save the hyperparameters for this mod
         param = self.__getModelParam__()

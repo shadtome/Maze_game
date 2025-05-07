@@ -17,6 +17,7 @@ class maze_runner_stickyActions(Wrapper):
             for a in range(v):
                 
                 if self.last_action[k][a] is not None and np.random.rand() < self.sticky_prob:
+                    
                     action[k][a] = self.last_action[k][a]
                 self.last_action[k][a] = action[k][a]
             

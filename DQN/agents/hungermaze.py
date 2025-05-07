@@ -20,7 +20,7 @@ class HungerGamesAgent(BaseAgent):
         
         super().__init__(model=model, vision=vision, action_type=action_type, 
                          dist_paradigm=dist_paradigm, 
-                         game_info = game_info **kwargs)
+                         game_info = game_info, **kwargs)
         
     
     @classmethod
